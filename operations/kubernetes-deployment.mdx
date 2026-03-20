@@ -1,0 +1,244 @@
+---
+title: "Kubernetes deployment"
+description: "Deploy Tessellation validator clusters on Kubernetes using Kustomize overlays, with Prometheus, Grafana, and Loki for observability."
+---
+
+Tessellation includes Kubernetes manifests in the `kubernetes/` directory, structured as Kustomize overlays. Each cluster type (L0 and L1) is a separate overlay on top of a shared base. A full observability stack (Prometheus, Grafana, Loki) is provided alongside.
+
+## Directory structure
+
+```
+kubernetes/
+├── base/                    # Shared base: Deployment, Service, Promtail sidecar
+│   ├── deployment.yaml
+│   ├── service.yaml
+│   ├── kustomization.yaml
+│   └── promtail/
+│       └── config.yaml      # Promtail log scraping config
+├── l0-cluster/              # L0 Kustomize overlay
+│   └── kustomization.yaml
+├── l1-cluster/              # L1 Kustomize overlay
+│   └── kustomization.yaml
+├── grafana/                 # Grafana deployment + dashboards
+├── prometheus/              # Prometheus deployment + scrape config
+├── loki/                    # Loki log aggregation
+├── nginx/                   # Nginx reverse proxy
+├── chaos-mesh/              # Chaos engineering workflows
+└── data/                    # Static data (genesis, etc.)
+```
+
+## Base resources
+
+The base layer defines a `validator-deployment` and an `initial-validator` Service.
+
+```yaml
+# kubernetes/base/deployment.yaml (excerpt)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: validator-deployment
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: validator
+          image: validator
+          ports:
+            - name: public
+              containerPort: 9000
+            - name: p2p
+              containerPort: 9001
+            - name: cli
+              containerPort: 9002
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "1000m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+          livenessProbe:
+            httpGet:
+              path: /node/health
+              port: public
+          startupProbe:
+            httpGet:
+              path: /node/health
+              port: public
+            failureThreshold: 30
+            periodSeconds: 10
+          envFrom:
+            - configMapRef:
+                name: validator-config
+          env:
+            - name: CL_EXTERNAL_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: CL_COLLATERAL
+              value: "0"
+```
+
+A Promtail sidecar container runs alongside the validator and ships JSON logs to Loki (see [Monitoring](/operations/monitoring)).
+
+## Cluster overlays
+
+### L0 cluster
+
+```yaml
+# kubernetes/l0-cluster/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base/
+namePrefix: l0-
+commonLabels:
+  cluster: l0
+images:
+  - name: validator
+    newName: l0-validator
+configMapGenerator:
+  - name: validator-config
+    literals:
+      - L0_INITIAL_VALIDATOR_ID=00b8a56a20fc2e2a...
+replicas:
+  - name: validator-deployment
+    count: 2
+```
+
+### L1 cluster
+
+```yaml
+# kubernetes/l1-cluster/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base/
+namePrefix: l1-
+commonLabels:
+  cluster: l1
+images:
+  - name: validator
+    newName: l1-validator
+configMapGenerator:
+  - name: validator-config
+    literals:
+      - L0_INITIAL_VALIDATOR_ID=00b8a56a20fc2e2a...
+      - L1_INITIAL_VALIDATOR_ID=fbf91bc197ece694...
+replicas:
+  - name: validator-deployment
+    count: 2
+```
+
+Each overlay:
+- Prefixes all resource names (e.g., `l0-validator-deployment`, `l1-initial-validator`)
+- Sets the `cluster` label for selector isolation
+- Substitutes the `validator` image with the cluster-specific image
+- Configures the initial validator node ID via a ConfigMap
+
+## Deploying with Kustomize
+
+<Steps>
+  <Step title="Build container images">
+    Build and push the L0 and L1 validator images:
+
+    ```bash
+    docker build -f kubernetes/l0.Dockerfile -t l0-validator:latest .
+    docker build -f kubernetes/l1.Dockerfile -t l1-validator:latest .
+    ```
+  </Step>
+
+  <Step title="Apply the L0 cluster">
+    ```bash
+    kubectl apply -k kubernetes/l0-cluster/
+    ```
+  </Step>
+
+  <Step title="Apply the L1 cluster">
+    ```bash
+    kubectl apply -k kubernetes/l1-cluster/
+    ```
+  </Step>
+
+  <Step title="Deploy the observability stack">
+    ```bash
+    kubectl apply -k kubernetes/prometheus/
+    kubectl apply -k kubernetes/grafana/
+    kubectl apply -k kubernetes/loki/
+    ```
+  </Step>
+
+  <Step title="Verify pods are running">
+    ```bash
+    kubectl get pods -l cluster=l0
+    kubectl get pods -l cluster=l1
+    kubectl get pods -l app=grafana
+    ```
+  </Step>
+</Steps>
+
+## Namespaces and services
+
+The base `Service` exposes `NodePort` ports for the initial validator:
+
+```yaml
+# kubernetes/base/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: initial-validator
+spec:
+  type: NodePort
+  ports:
+    - port: 9000
+      name: public
+    - port: 9001
+      name: p2p
+    - port: 9002
+      name: cli
+  selector:
+    node: initial-validator
+```
+
+After applying the L0 overlay, this becomes `l0-initial-validator`. After applying the L1 overlay, it becomes `l1-initial-validator`. Prometheus uses these service names for service discovery:
+
+```yaml
+# From kubernetes/prometheus/prometheus.yaml
+http_sd_configs:
+  - url: http://l0-initial-validator:9000/targets
+  - url: http://l1-initial-validator:9000/targets
+```
+
+## ConfigMaps and environment
+
+Node configuration is injected via a `validator-config` ConfigMap (generated by Kustomize). Node-specific runtime values are injected directly as environment variables:
+
+| Variable | Source | Description |
+|----------|--------|-------------|
+| `CL_EXTERNAL_IP` | Pod IP (`status.podIP`) | Announced peer IP |
+| `CL_COLLATERAL` | Literal `"0"` | Node collateral |
+| `INITIAL_VALIDATOR` | Literal `"1"` | Marks the initial (genesis) validator pod |
+| `L0_INITIAL_VALIDATOR_ID` | ConfigMap | Node ID of the L0 genesis validator |
+| `L1_INITIAL_VALIDATOR_ID` | ConfigMap | Node ID of the L1 genesis validator |
+
+## Health checks and readiness probes
+
+All probes hit `GET /node/health` on the `public` port (9000):
+
+| Probe | Config | Purpose |
+|-------|--------|---------|
+| **Liveness** | `httpGet /node/health` | Restart pod if the process hangs |
+| **Readiness** | `httpGet /node/health` | Remove pod from Service until healthy |
+| **Startup** | `httpGet /node/health`, `failureThreshold: 30`, `periodSeconds: 10` | Give the JVM up to 300 s to start |
+
+## Local development with Skaffold
+
+Skaffold is configured for rapid local Kubernetes development:
+
+```bash
+skaffold dev    # Watch for changes, rebuild images, re-deploy
+skaffold run    # One-shot build and deploy
+```
+
+The `skaffold.yaml` file in the project root coordinates image builds for both the L0 and L1 validator images alongside the Kustomize overlay deployments.

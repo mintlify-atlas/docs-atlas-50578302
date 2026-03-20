@@ -1,0 +1,226 @@
+---
+title: "Data applications"
+description: "Add custom data types with their own consensus logic to a currency metagraph."
+---
+
+A **data application** lets a metagraph define custom data types — beyond token transactions — that go through their own consensus process and are stored in every currency snapshot.
+
+## What a data application is
+
+In a standard currency metagraph, currency snapshots contain signed `Transaction` objects. A data application extends this by adding a custom `DataUpdate` type. Users submit `DataUpdate` objects to the L1 HTTP API, L1 validates and batches them into `DataApplicationBlock` objects, and L0 processes those blocks during snapshot consensus to produce an updated `DataState`.
+
+The `DataState` has two parts:
+
+```scala
+case class DataState[A <: DataOnChainState, B <: DataCalculatedState](
+  onChain: A,
+  calculated: B,
+  sharedArtifacts: SortedSet[SharedArtifact] = SortedSet.empty[SharedArtifact]
+)
+```
+
+- `onChain` — data committed to the currency snapshot and visible to all observers.
+- `calculated` — derived state computed by the L0 node, not directly stored in the snapshot hash but retrievable via API.
+
+## Lifecycle
+
+```
+User submits DataUpdate
+        │
+        ▼
+L1: validateUpdate        ← your L1 implementation
+        │
+        ▼ (grouped into DataApplicationBlock)
+L0: validateData          ← your L0 implementation
+        │
+        ▼
+L0: combine               ← your L0 implementation
+        │
+        ▼
+CurrencyIncrementalSnapshot contains DataApplicationBlock hashes
+        │
+        ▼
+onSnapshotConsensusResult ← optional hook, called after finalization
+```
+
+## Core types
+
+### `DataUpdate`
+
+Define your custom update type by extending `DataUpdate`:
+
+```scala
+trait DataUpdate extends DataTransaction
+```
+
+Your concrete type must have Circe `Encoder` and `Decoder` instances so the framework can serialize it over HTTP and into snapshots.
+
+### `DataApplicationBlock`
+
+The framework groups validated `DataUpdate` objects into a block for consensus:
+
+```scala
+case class DataApplicationBlock(
+  roundId: RoundId,
+  dataTransactions: NonEmptyList[DataTransactions],
+  dataTransactionsHashes: NonEmptyList[NonEmptyList[Hash]],
+  updateHashes: Option[SortedSet[Hash]] = None
+)
+```
+
+### `FeeTransaction`
+
+Data updates can optionally be accompanied by a fee payment:
+
+```scala
+case class FeeTransaction(
+  source: Address,
+  destination: Address,
+  amount: Amount,
+  dataUpdateRef: Hash
+) extends DataTransaction
+```
+
+Implement `validateFee` in your service to enforce fee requirements.
+
+## Implementing the L0 service
+
+Extend `DataApplicationL0Service` with your concrete types:
+
+```scala
+import cats.effect.IO
+import cats.data.NonEmptyList
+import io.constellationnetwork.currency.dataApplication._
+import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.signature.Signed
+
+// Your custom types
+case class MyUpdate(value: String) extends DataUpdate
+case class MyOnChainState(entries: List[String]) extends DataOnChainState
+case class MyCalculatedState(count: Long) extends DataCalculatedState
+
+object MyL0Service extends DataApplicationL0Service[IO, MyUpdate, MyOnChainState, MyCalculatedState] {
+
+  override val genesis: DataState[MyOnChainState, MyCalculatedState] =
+    DataState(MyOnChainState(List.empty), MyCalculatedState(0L))
+
+  override def validateData(
+    state: DataState[MyOnChainState, MyCalculatedState],
+    updates: NonEmptyList[Signed[MyUpdate]]
+  )(implicit context: L0NodeContext[IO]): IO[DataApplicationValidationErrorOr[Unit]] =
+    // Return valid or invalid with your rules
+    ???
+
+  override def combine(
+    state: DataState[MyOnChainState, MyCalculatedState],
+    updates: List[Signed[MyUpdate]]
+  )(implicit context: L0NodeContext[IO]): IO[DataState[MyOnChainState, MyCalculatedState]] =
+    // Apply updates to state
+    ???
+
+  override def getCalculatedState(
+    implicit context: L0NodeContext[IO]
+  ): IO[(SnapshotOrdinal, MyCalculatedState)] = ???
+
+  override def setCalculatedState(
+    ordinal: SnapshotOrdinal,
+    state: MyCalculatedState
+  )(implicit context: L0NodeContext[IO]): IO[Boolean] = ???
+
+  override def hashCalculatedState(
+    state: MyCalculatedState
+  )(implicit context: L0NodeContext[IO]): IO[Hash] = ???
+
+  // Called after every finalized snapshot
+  override def onSnapshotConsensusResult(
+    snapshot: Hashed[CurrencyIncrementalSnapshot]
+  )(implicit A: Applicative[IO]): IO[Unit] = IO.unit
+}
+```
+
+## Implementing the L1 service
+
+The L1 service validates individual updates before they enter consensus:
+
+```scala
+object MyL1Service extends DataApplicationL1Service[IO, MyUpdate, MyOnChainState, MyCalculatedState] {
+
+  override def validateUpdate(
+    update: MyUpdate
+  )(implicit context: L1NodeContext[IO]): IO[DataApplicationValidationErrorOr[Unit]] =
+    // Validate a single incoming update
+    ???
+}
+```
+
+## Registering the services
+
+Wire both services into your app classes:
+
+```scala
+// In your CurrencyL0App
+override def dataApplication: Option[Resource[IO, BaseDataApplicationL0Service[IO]]] =
+  Some(Resource.pure(BaseDataApplicationL0Service(MyL0Service)))
+
+// In your CurrencyL1App
+override def dataApplication: Option[Resource[IO, BaseDataApplicationL1Service[IO]]] =
+  Some(Resource.pure(BaseDataApplicationL1Service(MyL1Service)))
+```
+
+<Note>
+`BaseDataApplicationL0Service.apply` and `BaseDataApplicationL1Service.apply` wrap your typed service into the base trait that the framework consumes. They require implicit `ClassTag` instances for your three type parameters, which the compiler derives automatically.
+</Note>
+
+## L0 node context
+
+Your L0 methods receive an implicit `L0NodeContext[F]` that provides access to recent snapshots and cluster state:
+
+```scala
+trait L0NodeContext[F[_]] {
+  def getLastSynchronizedGlobalSnapshot: F[Option[GlobalIncrementalSnapshot]]
+  def getLastCurrencySnapshot: F[Option[Hashed[CurrencyIncrementalSnapshot]]]
+  def getLastCurrencySnapshotCombined: F[Option[(Hashed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]]
+  def securityProvider: SecurityProvider[F]
+  def getCurrencyId: F[CurrencyId]
+  def getMetagraphL0Seedlist: Option[Set[SeedlistEntry]]
+}
+```
+
+## L1 node context
+
+Your L1 methods receive an `L1NodeContext[F]`:
+
+```scala
+trait L1NodeContext[F[_]] {
+  def getLastGlobalSnapshot: F[Option[Hashed[GlobalIncrementalSnapshot]]]
+  def getLastCurrencySnapshot: F[Option[Hashed[CurrencyIncrementalSnapshot]]]
+  def getLastCurrencySnapshotCombined: F[Option[(Hashed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]]
+  def securityProvider: SecurityProvider[F]
+  def getCurrencyId: F[CurrencyId]
+}
+```
+
+## Validation errors
+
+Return validation failures using `ValidatedNec`:
+
+```scala
+type DataApplicationValidationErrorOr[A] = ValidatedNec[DataApplicationValidationError, A]
+
+trait DataApplicationValidationError {
+  val message: String
+}
+```
+
+Built-in error values are available in `io.constellationnetwork.currency.dataApplication.Errors`:
+
+| Error | Meaning |
+|---|---|
+| `Noop` | Generic invalid update |
+| `MissingDataUpdateTransaction` | No data update found |
+| `NotEnoughFee` | Attached fee is too low |
+| `SourceWalletNotEnoughBalance` | Source cannot cover fee |
+| `MissingFeeTransaction` | Required fee transaction absent |
+| `InvalidSignature` | Signature verification failed |
+| `NoValidDataTransactions` | None of the updates passed validation |

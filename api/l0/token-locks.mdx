@@ -1,0 +1,89 @@
+---
+title: "Token Locks"
+description: "Query active token locks for an address from the Global L0 node."
+---
+
+Token locks are DAG tokens locked on-chain for a specified or indefinite period. The Global L0 node tracks the state of all active token locks and exposes them through this endpoint. Token locks are created via the DAG L1 API and serve as the backing mechanism for delegated stakes and node collateral.
+
+<Note>
+  All endpoints return the following response headers:
+  - **X-Id** — The node's public key identifier
+  - **X-Session-Token** — The current cluster session token
+  - **Request-Signature** — Cryptographic signature of the response for verification
+</Note>
+
+---
+
+## GET /token-locks
+
+Returns all active token locks for a given address, as recorded in the latest global snapshot.
+
+```bash
+curl "https://<node-host>:9000/token-locks?address=DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack"
+```
+
+<ParamField query="address" type="string" required>
+  The DAG wallet address to query for active token locks
+</ParamField>
+
+**Response `200 OK`**
+
+Returns an array of `TokenLock` objects.
+
+<ResponseField name="[]" type="array">
+  Array of active token lock objects
+  <Expandable title="TokenLock">
+    <ResponseField name="source" type="string">
+      Source wallet address that created this token lock
+    </ResponseField>
+    <ResponseField name="amount" type="integer">
+      Locked amount in datums
+    </ResponseField>
+    <ResponseField name="fee" type="integer">
+      Fee paid for the lock transaction, in datums
+    </ResponseField>
+    <ResponseField name="parent" type="object">
+      Reference to the parent token lock transaction
+      <Expandable title="TokenLockReference">
+        <ResponseField name="ordinal" type="integer">
+          Ordinal number of the parent transaction
+        </ResponseField>
+        <ResponseField name="hash" type="string">
+          Hash of the parent transaction
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    <ResponseField name="currencyId" type="string">
+      Currency identifier for the token lock. `null` for DAG locks.
+    </ResponseField>
+    <ResponseField name="unlockEpoch" type="integer">
+      Epoch at which the tokens unlock. `null` for indefinite locks (used for staking).
+    </ResponseField>
+    <ResponseField name="replaceTokenLockRef" type="string">
+      Hash of an existing token lock that this one replaces (for increasing an existing lock). `null` for new locks.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+**Example response:**
+
+```json
+[
+  {
+    "source": "DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack",
+    "amount": 25000000000,
+    "fee": 0,
+    "parent": {
+      "ordinal": 0,
+      "hash": ""
+    },
+    "currencyId": null,
+    "unlockEpoch": null,
+    "replaceTokenLockRef": null
+  }
+]
+```
+
+**Response `503 Service Unavailable`**
+
+Node is not in `Ready` state.

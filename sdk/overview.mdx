@@ -1,0 +1,110 @@
+---
+title: "SDK overview"
+description: "The tessellation-sdk artifact is the stable public API for building currency metagraphs on Constellation Network."
+---
+
+The `modules/sdk` module is a single published artifact that re-exports every internal Tessellation module under stable package paths. Metagraph developers depend on it instead of individual internal modules.
+
+<Note>
+The SDK is published to Sonatype Central as `io.constellationnetwork:tessellation-sdk`. All other Tessellation modules are marked `publish / skip := true` and are not available on Maven Central.
+</Note>
+
+## What the SDK exposes
+
+The SDK aggregates the following internal modules into one artifact:
+
+| Internal module | What it provides |
+|---|---|
+| `shared` | Core types: `Transaction`, `Block`, `GlobalSnapshot`, `Address`, `Hash`, `Signed` |
+| `keytool` | Key management, PKCS12 keystore operations |
+| `kernel` | Recursion schemes, `Cell` abstractions |
+| `node-shared` | P2P networking, consensus, gossip, `Rewards` trait |
+| `currency-l0` | `CurrencyL0App`, `OverridableL0`, currency snapshot types |
+| `currency-l1` | `CurrencyL1App`, `OverridableL1`, data application L1 service |
+| `dag-l1` | Block consensus, `CustomContextualTransactionValidator` |
+
+All of these are bundled into the SDK JAR and re-exported under the `io.constellationnetwork.sdk` package hierarchy.
+
+## Key SDK entry points
+
+### `SecurityProvider[F]`
+
+A type alias for the internal `io.constellationnetwork.security.SecurityProvider[F]`, exposed at `io.constellationnetwork.sdk.security`.
+
+```scala
+// sdk/security/package.scala
+type SecurityProvider[F[_]] = io.constellationnetwork.security.SecurityProvider[F]
+
+object SecurityProvider {
+  def apply[F[_]: SecurityProvider]: SecurityProvider[F] = implicitly
+
+  def forAsync[F[_]: Async]: Resource[F, SecurityProvider[F]] =
+    io.constellationnetwork.security.SecurityProvider.forAsync
+}
+```
+
+### `keypair.generate[F]`
+
+Generates a cryptographic key pair using the active `SecurityProvider`.
+
+```scala
+// sdk/keytool/keypair/package.scala
+def generate[F[_]: Async: SecurityProvider]: F[KeyPair] =
+  KeyPairGenerator.makeKeyPair[F]
+```
+
+## Why `provided` scope
+
+When you declare the SDK dependency in your metagraph project, use `provided` scope:
+
+```sbt
+libraryDependencies += "io.constellationnetwork" %% "tessellation-sdk" % tessellationVersion % Provided
+```
+
+`provided` means the SDK classes are available at compile time but are not bundled into your metagraph JAR. The node runtime already ships the SDK implementation — adding it twice would cause `ClassCastException` errors when the node loads your metagraph.
+
+## How the SDK is built
+
+Internally, the `sdk` SBT project depends on all other modules with `% "provided"` scope and then copies their compiled classes and sources into its own JAR:
+
+```sbt
+lazy val sdk = (project in file("modules/sdk"))
+  .dependsOn(
+    keytool % "provided",
+    kernel % "provided",
+    shared % "provided",
+    nodeShared % "provided",
+    currencyL0 % "provided",
+    currencyL1 % "provided",
+    dagL1 % "provided"
+  )
+  .settings(
+    name := "tessellation-sdk",
+    // ...
+    Compile / packageBin / mappings ++= Seq(
+      (keytool / Compile / packageBin / mappings).value,
+      (kernel / Compile / packageBin / mappings).value,
+      // ... all other modules
+    ).flatten
+  )
+```
+
+## SDK pages
+
+<CardGroup cols={2}>
+  <Card title="Getting started" href="/sdk/getting-started">
+    Set up your metagraph project and wire up the SDK dependency.
+  </Card>
+  <Card title="Extension points" href="/sdk/extension-points">
+    All overridable hooks in `CurrencyL0App` and `CurrencyL1App`.
+  </Card>
+  <Card title="Data applications" href="/sdk/data-applications">
+    Custom data blocks with per-metagraph consensus logic.
+  </Card>
+  <Card title="Custom rewards" href="/sdk/custom-rewards">
+    Override the default reward distribution for your metagraph.
+  </Card>
+  <Card title="Custom validators" href="/sdk/custom-validators">
+    Add metagraph-specific transaction validation rules.
+  </Card>
+</CardGroup>

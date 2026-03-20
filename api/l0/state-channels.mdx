@@ -1,0 +1,45 @@
+---
+title: "State Channels"
+description: "Submit binary state channel snapshots to the Global L0 node for inclusion in global consensus."
+---
+
+State channels (metagraphs) communicate with the Global L0 layer by posting signed binary snapshots. These snapshots are included in the next global snapshot and form the basis for metagraph state transitions.
+
+<Note>
+  All endpoints return the following response headers:
+  - **X-Id** — The node's public key identifier
+  - **X-Session-Token** — The current cluster session token
+  - **Request-Signature** — Cryptographic signature of the response for verification
+</Note>
+
+<Warning>
+  This endpoint accepts raw binary data (`application/octet-stream`). The snapshot must be a Kryo-serialized `SignedStateChannelSnapshotBinary` value. Malformed or improperly signed snapshots will be rejected silently (the node returns `204` for accepted submissions, not for validity).
+</Warning>
+
+---
+
+## POST /state-channels/{address}/snapshot
+
+Submits a signed binary snapshot for the given state channel (metagraph) address. The snapshot will be queued for inclusion in the next global snapshot round.
+
+```bash
+curl -X POST https://<node-host>:9000/state-channels/DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack/snapshot \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @snapshot.bin
+```
+
+<ParamField path="address" type="string" required>
+  The metagraph (state channel) address. This must match a registered state channel address on the network.
+</ParamField>
+
+**Request body**
+
+The request body must be a binary (`application/octet-stream`) payload containing a Kryo-serialized signed state channel snapshot.
+
+**Response `204 No Content`**
+
+The snapshot was received and queued for processing. A `204` response confirms receipt, not validity — the snapshot is validated during the consensus round.
+
+**Response `404 Not Found`**
+
+The given address is not a registered state channel on this node's known network state.

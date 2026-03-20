@@ -1,0 +1,216 @@
+---
+title: "Monitoring"
+description: "Prometheus metrics, Grafana dashboards, and Loki log aggregation for Tessellation nodes."
+---
+
+Tessellation exposes Prometheus-compatible metrics via Micrometer, ships structured JSON logs via Logback, and provides a pre-configured observability stack (Prometheus + Grafana + Loki) for Kubernetes deployments.
+
+## Metrics: Micrometer + Prometheus
+
+Every node exposes a Prometheus scrape endpoint:
+
+```
+GET /metrics
+```
+
+This endpoint is served on the **public HTTP port** (default: `9000`). Prometheus is configured to discover scrape targets dynamically via the initial validator's `/targets` API.
+
+```yaml
+# kubernetes/prometheus/prometheus.yaml
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+scrape_configs:
+  - job_name: prometheus
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - localhost:9090
+  - job_name: dynamic-targets
+    http_sd_configs:
+      - url: http://l0-initial-validator:9000/targets
+      - url: http://l1-initial-validator:9000/targets
+```
+
+<Note>
+  The `/targets` endpoint on each initial validator returns the list of all peer nodes in the cluster as Prometheus service discovery targets. This means Prometheus automatically picks up new peers as they join.
+</Note>
+
+### Key metrics to monitor
+
+| Metric category | What to watch |
+|----------------|---------------|
+| **Consensus rounds** | Round duration, stall frequency, phase transition latency |
+| **Gossip** | Rumor propagation rate, peer rumor lag |
+| **Cluster** | Cluster size (number of active peers), join/leave events |
+| **JVM** | Heap usage, GC pause duration, thread count |
+| **HTTP** | Request latency (p99), error rates per endpoint |
+
+Metrics are instrumented with **Micrometer** and follow JVM Micrometer naming conventions (e.g., `jvm_memory_used_bytes`, `http_server_requests_seconds`).
+
+## Prometheus deployment
+
+The Prometheus deployment in `kubernetes/prometheus/` runs `prom/prometheus:v2.36.1` with 24-hour TSDB retention:
+
+```yaml
+# kubernetes/prometheus/prometheus-deployment.yaml (excerpt)
+containers:
+  - name: prometheus
+    image: prom/prometheus:v2.36.1
+    args:
+      - "--storage.tsdb.retention.time=24h"
+      - "--config.file=/etc/prometheus/prometheus.yaml"
+      - "--storage.tsdb.path=/prometheus/"
+    ports:
+      - containerPort: 9090
+        name: http
+```
+
+Deploy with Kustomize:
+
+```bash
+kubectl apply -k kubernetes/prometheus/
+```
+
+## Grafana dashboards
+
+Grafana `9.1.6` is deployed with anonymous admin access and two pre-provisioned dashboards:
+
+| Dashboard | File | Content |
+|-----------|------|---------|
+| **Tessellation** | `dashboards/tessellation.json` | Node-specific metrics: consensus, gossip, cluster |
+| **JVM Micrometer** | `dashboards/jvm-micrometer_rev9.json` | JVM health: heap, GC, threads, CPU |
+
+Datasources are provisioned automatically:
+
+```yaml
+# kubernetes/grafana/datasources/datasource.yaml
+datasources:
+  - name: prometheus
+    type: prometheus
+    url: http://prometheus:9090
+    isDefault: true
+  - name: loki
+    type: loki
+    url: http://loki:3100
+    jsonData:
+      maxLines: 1000
+```
+
+Deploy Grafana:
+
+```bash
+kubectl apply -k kubernetes/grafana/
+```
+
+Grafana is available at port `3000`. The readiness probe checks `GET /api/health`.
+
+<Tip>
+  The `natel-discrete-panel` plugin is pre-installed in the Grafana deployment for discrete/state-timeline visualizations of consensus round phases.
+</Tip>
+
+## Loki log aggregation
+
+Loki aggregates structured JSON logs from all validator pods. A **Promtail** sidecar container runs in each validator pod and ships logs to Loki.
+
+### Log format
+
+Tessellation uses Logback with the Logstash JSON encoder. Each log line is a JSON object written to `/tessellation/logs/json_logs/*.json.log`. Promtail parses these fields:
+
+| Field | Description |
+|-------|-------------|
+| `@timestamp` | ISO 8601 timestamp (RFC3339Nano) |
+| `message` | Log message body |
+| `level` | Log level (`INFO`, `WARN`, `ERROR`, etc.) |
+| `logger_name` | Fully-qualified logger name |
+| `ip` | Node IP address |
+| `application` | Application/module name |
+| `peer_id_short` | Abbreviated peer node ID |
+
+### Promtail configuration
+
+```yaml
+# kubernetes/base/promtail/config.yaml
+client:
+  url: "http://loki:3100/loki/api/v1/push"
+
+scrape_configs:
+  - job_name: system
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          __path__: /var/log/app/json_logs/*.json.log
+    pipeline_stages:
+      - json:
+          expressions:
+            timestamp: '"@timestamp"'
+            message: message
+            level: level
+            logger_name: logger_name
+            ip: ip
+            application: application
+            peer_id_short: peer_id_short
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+      - labels:
+          level:
+          ip:
+          application:
+          peer_id_short:
+```
+
+### Loki configuration
+
+Loki runs in single-binary mode with filesystem storage:
+
+```yaml
+# kubernetes/loki/config.yaml
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+
+schema_config:
+  configs:
+    - from: 2020-10-24
+      store: boltdb-shipper
+      object_store: filesystem
+      schema: v11
+      index:
+        prefix: index_
+        period: 24h
+```
+
+Deploy Loki:
+
+```bash
+kubectl apply -k kubernetes/loki/
+```
+
+## Querying logs in Grafana
+
+With the Loki datasource configured, use LogQL to query validator logs:
+
+```logql
+# All ERROR logs from the l0 application
+{application="dag-l0", level="ERROR"}
+
+# Consensus-related logs for a specific peer
+{application="dag-l0", peer_id_short="abc123"} |= "consensus"
+
+# Log rate by level
+sum by (level) (rate({application="dag-l0"}[1m]))
+```
+
+<Note>
+  Logs from Docker-based deployments use a different log path (`/tessellation/logs/`) rather than the Kubernetes Promtail path (`/var/log/app/`). For Docker, check logs directly with `docker logs <container-name>` or mount a host volume to access log files.
+</Note>

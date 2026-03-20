@@ -1,0 +1,256 @@
+---
+title: "Transactions"
+description: "Submit and query metagraph currency token transactions on the Currency L1 node."
+---
+
+The Currency L1 node handles token transactions for a metagraph's native currency. The transaction model is identical to DAG L1 transactions, but operates on metagraph tokens rather than $DAG. Currency L1 also supports fee estimation and token lock operations.
+
+<Note>
+  All endpoints return the following response headers:
+  - **X-Id** — The node's public key identifier
+  - **X-Session-Token** — The current cluster session token
+  - **Request-Signature** — Cryptographic signature of the response for verification
+</Note>
+
+<Info>
+  **Building a valid transaction:** Always call `GET /transactions/last-reference/{address}` before constructing a new transaction to get the correct `parent.hash` and `parent.ordinal`. The new transaction's parent ordinal must be exactly `lastOrdinal + 1`.
+</Info>
+
+## Base URL
+
+The Currency L1 API typically runs on port `9300` (metagraph nodes may use different ports).
+
+```
+https://<metagraph-l1-host>:9300
+```
+
+---
+
+## POST /transactions
+
+Submits a signed metagraph currency transaction for processing.
+
+```bash
+curl -X POST https://<metagraph-l1-host>:9300/transactions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "value": {
+      "source": "DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack",
+      "destination": "DAG2rMPHX4w1cMMJowmewRMjD1in53yRURt6Eijh",
+      "amount": 100000000,
+      "fee": 0,
+      "parent": {
+        "hash": "",
+        "ordinal": 0
+      },
+      "salt": 6018762703199813000
+    },
+    "proofs": [
+      { "id": "<public-key-hex>", "signature": "<ecdsa-der-hex>" }
+    ]
+  }'
+```
+
+**Request body** — `SignedTransaction`
+
+<ParamField body="value" type="object" required>
+  The currency transaction payload
+  <Expandable title="Transaction">
+    <ParamField body="source" type="string" required>
+      Source wallet address (must begin with `DAG`)
+    </ParamField>
+    <ParamField body="destination" type="string" required>
+      Destination wallet address (must be different from source)
+    </ParamField>
+    <ParamField body="amount" type="integer" required>
+      Amount to transfer in the currency's smallest unit
+    </ParamField>
+    <ParamField body="fee" type="integer" required>
+      Transaction fee in the currency's smallest unit (can be 0 subject to rate limits)
+    </ParamField>
+    <ParamField body="parent" type="object" required>
+      Reference to the previous accepted transaction from the source address
+      <Expandable title="TransactionReference">
+        <ParamField body="hash" type="string" required>
+          Hash of the parent transaction. Use empty string `""` for the first transaction.
+        </ParamField>
+        <ParamField body="ordinal" type="integer" required>
+          Ordinal of the parent transaction. Use `0` for the first transaction.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+    <ParamField body="salt" type="integer" required>
+      Random 64-bit integer for uniqueness
+    </ParamField>
+  </Expandable>
+</ParamField>
+<ParamField body="proofs" type="array" required>
+  Array of cryptographic signature proofs. Must be signed by the source address owner.
+  <Expandable title="SignatureProof">
+    <ParamField body="id" type="string" required>
+      Public key hex of the signing key
+    </ParamField>
+    <ParamField body="signature" type="string" required>
+      ECDSA signature in DER format (hex-encoded)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+**Response `200 OK`**
+
+<ResponseField name="hash" type="string">
+  Hash of the accepted transaction.
+</ResponseField>
+
+**Response `400 Bad Request`**
+
+The transaction was rejected. Returns one of the following rejection reasons:
+
+<ResponseField name="errors" type="array">
+  <Expandable title="Rejection reasons">
+    <ResponseField name="TransactionLimited" type="string">
+      Fee-less transaction rate limit exceeded for this address.
+    </ResponseField>
+    <ResponseField name="ParentOrdinalLowerThenLastTxOrdinal" type="string">
+      The parent ordinal is lower than the last accepted transaction's ordinal.
+    </ResponseField>
+    <ResponseField name="HasNoMatchingParent" type="string">
+      The parent hash does not match any known accepted transaction.
+    </ResponseField>
+    <ResponseField name="InsufficientBalance" type="string">
+      Transaction amount exceeds the source address balance.
+    </ResponseField>
+    <ResponseField name="AddressLocked" type="string">
+      Source address is locked by the network.
+    </ResponseField>
+    <ResponseField name="Conflict" type="string">
+      A transaction with this hash has already been accepted.
+    </ResponseField>
+    <ResponseField name="SameSourceAndDestinationAddress" type="string">
+      Source and destination addresses must be different.
+    </ResponseField>
+    <ResponseField name="NotSignedBySourceAddressOwner" type="string">
+      Signature does not correspond to the source address's key.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## POST /transactions/estimate-fee
+
+Estimates the fee for a signed currency transaction without submitting it.
+
+```bash
+curl -X POST https://<metagraph-l1-host>:9300/transactions/estimate-fee \
+  -H "Content-Type: application/json" \
+  -d '{ "value": { ... }, "proofs": [ ... ] }'
+```
+
+**Request body** — Same as `POST /transactions` (`SignedTransaction`)
+
+**Response `200 OK`**
+
+<ResponseField name="hash" type="string">
+  The estimated fee in the currency's smallest unit
+</ResponseField>
+
+---
+
+## GET /transactions/{hash}
+
+Returns the current view of a currency transaction in the L1 mempool.
+
+```bash
+curl https://<metagraph-l1-host>:9300/transactions/a1b2c3d4e5f6789012345678901234567890
+```
+
+<ParamField path="hash" type="string" required>
+  The transaction hash (hex-encoded SHA-256)
+</ParamField>
+
+**Response `200 OK`**
+
+<ResponseField name="transaction" type="object">
+  The full transaction data
+</ResponseField>
+<ResponseField name="hash" type="string">
+  The transaction hash
+</ResponseField>
+<ResponseField name="status" type="string">
+  Current status in the mempool. Currently: `Waiting`
+</ResponseField>
+
+**Response `400 Bad Request`**
+
+No transaction with the given hash found in the mempool.
+
+---
+
+## GET /transactions/last-reference/{address}
+
+Returns the last accepted currency transaction reference for a given address.
+
+```bash
+curl https://<metagraph-l1-host>:9300/transactions/last-reference/DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack
+```
+
+<ParamField path="address" type="string" required>
+  Wallet address to query
+</ParamField>
+
+**Response `200 OK`**
+
+<ResponseField name="ordinal" type="integer">
+  Ordinal of the last accepted currency transaction. Use `ordinal + 1` for the next transaction's parent ordinal.
+</ResponseField>
+<ResponseField name="hash" type="string">
+  Hash of the last accepted currency transaction. Returns empty string `""` if no prior transactions exist.
+</ResponseField>
+
+**Example response:**
+
+```json
+{
+  "ordinal": 7,
+  "hash": "a1b2c3d4e5f6789012345678901234567890"
+}
+```
+
+---
+
+## Token Lock Endpoints
+
+The Currency L1 node also supports token lock operations, identical to the [DAG L1 Token Locks API](/api/l1/token-locks).
+
+### POST /token-locks
+
+Submits a signed token lock transaction for the metagraph currency.
+
+```bash
+curl -X POST https://<metagraph-l1-host>:9300/token-locks \
+  -H "Content-Type: application/json" \
+  -d '{ "value": { ... }, "proofs": [ ... ] }'
+```
+
+Same request/response schema as [DAG L1 `POST /token-locks`](/api/l1/token-locks).
+
+### GET /token-locks/{hash}
+
+Returns a token lock view from the currency L1 mempool.
+
+```bash
+curl https://<metagraph-l1-host>:9300/token-locks/a1b2c3d4e5f6...
+```
+
+Same schema as [DAG L1 `GET /token-locks/{hash}`](/api/l1/token-locks).
+
+### GET /token-locks/last-reference/{address}
+
+Returns the last token lock reference for use as a parent in new token lock requests.
+
+```bash
+curl https://<metagraph-l1-host>:9300/token-locks/last-reference/DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack
+```
+
+Same schema as [DAG L1 `GET /token-locks/last-reference/{address}`](/api/l1/token-locks).

@@ -1,0 +1,110 @@
+---
+title: "Testing"
+description: "Test framework, patterns, and commands for running unit, integration, and end-to-end tests in Tessellation."
+---
+
+## Test framework
+
+Tessellation uses the **Weaver** testing framework with **Cats Effect** (`weaver.framework.CatsEffect`). All tests are purely functional and run within `IO`.
+
+## MutableIOSuite pattern
+
+The standard base class for tests is `MutableIOSuite`. It supports shared resources that are initialized once per suite and released after all tests complete — a clean fit for the project's resource-based dependency model.
+
+```scala
+object MySuite extends MutableIOSuite with Checkers {
+  override type Res = (Dependency1, Dependency2)
+
+  override def sharedResource: Resource[IO, Res] =
+    for {
+      dep1 <- createDep1
+      dep2 <- createDep2
+    } yield (dep1, dep2)
+
+  test("my test") { case (dep1, dep2) =>
+    // test implementation
+  }
+}
+```
+
+<Info>
+  `sharedResource` follows the same `Resource[IO, _]` lifecycle pattern used throughout the main codebase. Resources are acquired before the first test and released after the last, regardless of test failures.
+</Info>
+
+## Test utilities
+
+Shared test helpers, generators, and fixtures live in `modules/test-shared/`. This module is available as a test dependency across all other modules.
+
+It includes:
+- Generator utilities for property-based testing with ScalaCheck
+- Common test fixtures and resource builders
+- Reusable Weaver discipline helpers
+
+## Running tests
+
+<CodeGroup>
+
+```bash SBT
+# Run all tests
+sbt test
+
+# Run tests for a single module
+sbt "dagL0/test"
+sbt "nodeShared/test"
+```
+
+```bash just (Docker)
+# Full test suite: compile, start Docker environment, run all e2e tests
+just test
+
+# Reuse existing JARs, skip compilation
+just test --skip-assembly
+```
+
+</CodeGroup>
+
+| Command | When to use |
+|---|---|
+| `sbt test` | Unit and integration tests during development |
+| `sbt "dagL0/test"` | Focused run for a single module |
+| `just test` | Full end-to-end validation before submitting a PR |
+| `just test --skip-assembly` | Faster iteration when JARs are already built |
+
+## Integration tests
+
+Integration test settings are configured via `Defaults.itSettings` in the SBT build. These run as part of the normal `sbt test` command under the integration test configuration.
+
+## End-to-end tests
+
+The `e2e-functionality-tests.yml` CI workflow runs **8 parallel test scenarios** against a full Docker-compose environment with 3 Global L0 nodes and the metagraph test stack.
+
+Locally, the same environment is launched with:
+
+```bash
+just test
+```
+
+The `just up` command starts the environment without running tests, which is useful for manual inspection or debugging:
+
+```bash
+just up
+# interact with the environment
+just down
+```
+
+## Property-based testing
+
+Property-based tests use **ScalaCheck** integrated with Weaver via the `Checkers` trait (mix in alongside `MutableIOSuite`).
+
+```scala
+object MyPropSuite extends MutableIOSuite with Checkers {
+  // forall checks are available via the Checkers mixin
+  test("transaction amount is always positive") {
+    forall(Gen.posNum[Long]) { amount =>
+      expect(amount > 0)
+    }
+  }
+}
+```
+
+Generator utilities for domain types (transactions, blocks, addresses, etc.) are provided by `modules/test-shared/` and can be imported directly in any test module.

@@ -1,0 +1,236 @@
+---
+title: "Currency Metagraph L0 Overview"
+description: "Overview of the Currency Metagraph L0 Public API and how it differs from the Global L0 API."
+---
+
+The Currency Metagraph L0 node exposes a public API that is structurally similar to the Global L0 node but operates at the metagraph level. Each metagraph runs its own L0 consensus to produce `CurrencyIncrementalSnapshot` objects, which are then submitted to the Global L0 for inclusion in global snapshots.
+
+<Note>
+  All endpoints return the following response headers:
+  - **X-Id** — The node's public key identifier
+  - **X-Session-Token** — The current cluster session token
+  - **Request-Signature** — Cryptographic signature of the response for verification
+</Note>
+
+## Base URL
+
+The Currency L0 API typically runs on port `9200` (metagraph nodes may use different ports depending on deployment configuration).
+
+```
+https://<metagraph-l0-host>:9200
+```
+
+---
+
+## Cluster Endpoints
+
+The cluster endpoints behave identically to the Global L0 cluster API but return peers in the metagraph's own L0 cluster.
+
+### GET /cluster/info
+
+Returns a list of peers in the metagraph L0 cluster.
+
+```bash
+curl https://<metagraph-l0-host>:9200/cluster/info
+```
+
+Same response schema as [Global L0 `GET /cluster/info`](/api/l0/cluster).
+
+### GET /cluster/session
+
+Returns the current cluster session token for the metagraph L0 cluster.
+
+```bash
+curl https://<metagraph-l0-host>:9200/cluster/session
+```
+
+---
+
+## Snapshot Endpoints
+
+The currency L0 snapshot endpoints mirror the Global L0 snapshot endpoints but return `CurrencyIncrementalSnapshot` objects instead of `GlobalIncrementalSnapshot`.
+
+### GET /snapshots/latest/ordinal
+
+Returns the ordinal of the latest metagraph snapshot.
+
+```bash
+curl https://<metagraph-l0-host>:9200/snapshots/latest/ordinal
+```
+
+**Response `200 OK`**
+
+<ResponseField name="value" type="integer">
+  The ordinal number of the latest currency snapshot
+</ResponseField>
+
+**Response `404 Not Found`** — No snapshot available yet.
+
+**Response `503 Service Unavailable`** — Node not ready.
+
+### GET /snapshots/latest
+
+Returns the full latest currency snapshot, signed by the metagraph facilitators. Supports both JSON and binary (`application/octet-stream`) response formats.
+
+```bash
+curl https://<metagraph-l0-host>:9200/snapshots/latest
+```
+
+**Response `200 OK`** — Returns a `SignedCurrencyIncrementalSnapshot`.
+
+<ResponseField name="value" type="object">
+  The currency snapshot data
+  <Expandable title="CurrencyIncrementalSnapshot">
+    <ResponseField name="ordinal" type="integer">
+      Snapshot ordinal number
+    </ResponseField>
+    <ResponseField name="height" type="integer">
+      Snapshot height
+    </ResponseField>
+    <ResponseField name="subHeight" type="integer">
+      Snapshot sub-height
+    </ResponseField>
+    <ResponseField name="lastSnapshotHash" type="string">
+      Hash of the previous currency snapshot
+    </ResponseField>
+    <ResponseField name="blocks" type="array">
+      Currency L1 blocks included in this snapshot
+    </ResponseField>
+    <ResponseField name="tips" type="object">
+      Active and deprecated tip references
+    </ResponseField>
+    <ResponseField name="stateProof" type="object">
+      Merkle proof of the currency snapshot state
+    </ResponseField>
+    <ResponseField name="data" type="array">
+      Optional custom data payload (bytes). Used by metagraphs with custom data applications (nullable).
+    </ResponseField>
+    <ResponseField name="version" type="string">
+      Snapshot format version
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+<ResponseField name="proofs" type="array">
+  Cryptographic proofs from metagraph facilitator nodes
+</ResponseField>
+
+### GET /snapshots/latest/combined
+
+Returns the latest currency snapshot combined with its full computed state.
+
+```bash
+curl https://<metagraph-l0-host>:9200/snapshots/latest/combined
+```
+
+**Response `200 OK`** — Returns a `SignedCurrencyIncrementalSnapshotCombined` (snapshot + state pair).
+
+### GET /snapshots/{ordinal}
+
+Returns a specific currency snapshot by ordinal.
+
+```bash
+curl https://<metagraph-l0-host>:9200/snapshots/1234
+```
+
+<ParamField path="ordinal" type="integer" required>
+  The snapshot ordinal to retrieve
+</ParamField>
+
+---
+
+## Currency Token Endpoints
+
+The currency L0 node exposes token supply and balance endpoints for the metagraph's native token.
+
+### GET /currency/total-supply
+
+Returns the total supply of the metagraph's native currency token.
+
+```bash
+curl https://<metagraph-l0-host>:9200/currency/total-supply
+```
+
+**Response `200 OK`**
+
+<ResponseField name="total" type="integer">
+  Total token supply in the smallest unit
+</ResponseField>
+<ResponseField name="ordinal" type="integer">
+  Snapshot ordinal at which this supply was calculated
+</ResponseField>
+
+### GET /currency/{address}/balance
+
+Returns the currency token balance for a given wallet address.
+
+```bash
+curl https://<metagraph-l0-host>:9200/currency/DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack/balance
+```
+
+<ParamField path="address" type="string" required>
+  The wallet address to query
+</ParamField>
+
+**Response `200 OK`**
+
+<ResponseField name="balance" type="integer">
+  Token balance in the smallest unit
+</ResponseField>
+<ResponseField name="ordinal" type="integer">
+  Snapshot ordinal at which this balance was recorded
+</ResponseField>
+
+---
+
+## Transaction Error Lookup
+
+### GET /transactions/{hash}/errors
+
+Returns validation errors for a transaction that was rejected during metagraph processing. This endpoint is unique to the Currency L0 API.
+
+```bash
+curl https://<metagraph-l0-host>:9200/transactions/a1b2c3d4e5f6.../errors
+```
+
+<ParamField path="hash" type="string" required>
+  Transaction hash to look up validation errors for
+</ParamField>
+
+**Response `200 OK`**
+
+<ResponseField name="message" type="string">
+  Human-readable description of the validation error
+</ResponseField>
+
+**Response `404 Not Found`** — No error record found for this transaction hash.
+
+**Response `503 Service Unavailable`** — Node not ready.
+
+---
+
+## Metrics
+
+### GET /metrics
+
+Returns Micrometer Prometheus metrics for the currency L0 node.
+
+```bash
+curl https://<metagraph-l0-host>:9200/metrics
+```
+
+Same format as [Global L0 `GET /metrics`](/api/l0/metrics).
+
+---
+
+## Key Differences from Global L0
+
+| Feature | Global L0 | Currency L0 |
+|---|---|---|
+| Snapshot type | `GlobalIncrementalSnapshot` | `CurrencyIncrementalSnapshot` |
+| Snapshot path prefix | `/global-snapshots` | `/snapshots` |
+| Token endpoints | `/dag/...` | `/currency/...` |
+| State channel snapshots | Yes (from all metagraphs) | No |
+| Custom data field | No | Yes (`data` byte array) |
+| Delegated stakes | Yes | No |
+| Node collateral | Yes | No |
+| Transaction errors endpoint | No | Yes (`/transactions/{hash}/errors`) |

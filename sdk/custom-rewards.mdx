@@ -1,0 +1,187 @@
+---
+title: "Custom rewards"
+description: "Override the default reward distribution logic for your currency metagraph."
+---
+
+Tessellation distributes rewards at the end of each consensus round triggered by a `TimeTrigger`. By default, currency metagraphs inherit the global L0 reward schedule. You can replace this with custom logic by implementing the `Rewards` trait.
+
+## The `Rewards` trait
+
+```scala
+// node-shared/domain/rewards/Rewards.scala
+trait Rewards[F[_], P <: StateProof, S <: IncrementalSnapshot[P], E] {
+  def distribute(
+    lastArtifact: Signed[S],
+    lastBalances: SortedMap[Address, Balance],
+    acceptedTransactions: SortedSet[Signed[Transaction]],
+    trigger: ConsensusTrigger,
+    events: Set[E],
+    maybeCalculatedState: Option[DataCalculatedState] = None
+  ): F[SortedSet[RewardTransaction]]
+}
+```
+
+For a currency metagraph, the concrete type parameters are:
+
+- `P` → `CurrencySnapshotStateProof`
+- `S` → `CurrencyIncrementalSnapshot`
+- `E` → `CurrencySnapshotEvent`
+
+## Consensus triggers
+
+Rewards are only meaningful on `TimeTrigger` rounds. `EventTrigger` rounds happen when there are pending events but no epoch boundary — returning an empty set on those is the standard pattern:
+
+```scala
+import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
+
+override def distribute(
+  lastArtifact: Signed[CurrencyIncrementalSnapshot],
+  lastBalances: SortedMap[Address, Balance],
+  acceptedTransactions: SortedSet[Signed[Transaction]],
+  trigger: ConsensusTrigger,
+  events: Set[CurrencySnapshotEvent],
+  maybeCalculatedState: Option[DataCalculatedState] = None
+): IO[SortedSet[RewardTransaction]] =
+  trigger match {
+    case EventTrigger => IO.pure(SortedSet.empty[RewardTransaction])
+    case TimeTrigger  => computeRewards(lastArtifact, lastBalances)
+  }
+```
+
+This mirrors the global L0 reward implementation:
+
+```scala
+// dag-l0/infrastructure/rewards/Rewards.scala
+def distribute(
+  lastArtifact: Signed[GlobalIncrementalSnapshot],
+  lastBalances: SortedMap[Address, Balance],
+  acceptedTransactions: SortedSet[Signed[Transaction]],
+  trigger: ConsensusTrigger,
+  events: Set[GlobalSnapshotEvent],
+  maybeCalculatedState: Option[DataCalculatedState] = None
+): F[SortedSet[RewardTransaction]] = {
+  val facilitators = lastArtifact.proofs.map(_.id)
+  trigger match {
+    case EventTrigger => SortedSet.empty[RewardTransaction].pure[F]
+    case TimeTrigger  => mintedDistribution(lastArtifact.epochProgress, facilitators)
+  }
+}
+```
+
+## Epoch progress
+
+The `lastArtifact.epochProgress` field tells you which epoch this round belongs to. Use it to implement epoch-based reward schedules:
+
+```scala
+import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.transaction.{RewardTransaction, TransactionAmount}
+import io.constellationnetwork.schema.balance.Amount
+
+def rewardAmountForEpoch(epoch: EpochProgress): Amount = {
+  // Halve rewards every 1,000,000 epochs
+  val halvings = (epoch.value / 1_000_000L).toInt
+  Amount(initialReward.value >> halvings)
+}
+```
+
+## Accessing data application state
+
+If your metagraph has a [data application](/sdk/data-applications), the current `DataCalculatedState` is passed as `maybeCalculatedState`. Use it to weight rewards based on participation:
+
+```scala
+override def distribute(
+  lastArtifact: Signed[CurrencyIncrementalSnapshot],
+  lastBalances: SortedMap[Address, Balance],
+  acceptedTransactions: SortedSet[Signed[Transaction]],
+  trigger: ConsensusTrigger,
+  events: Set[CurrencySnapshotEvent],
+  maybeCalculatedState: Option[DataCalculatedState] = None
+): IO[SortedSet[RewardTransaction]] =
+  trigger match {
+    case EventTrigger => IO.pure(SortedSet.empty)
+    case TimeTrigger =>
+      maybeCalculatedState match {
+        case Some(state: MyCalculatedState) => distributeByParticipation(state, lastBalances)
+        case _                              => IO.pure(SortedSet.empty)
+      }
+  }
+```
+
+## Implementing a custom distributor
+
+```scala
+import cats.effect.IO
+import cats.syntax.all._
+
+import scala.collection.immutable.{SortedMap, SortedSet}
+
+import io.constellationnetwork.currency.dataApplication.DataCalculatedState
+import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotEvent, CurrencySnapshotStateProof}
+import io.constellationnetwork.node.shared.domain.rewards.Rewards
+import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
+import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.balance.{Amount, Balance}
+import io.constellationnetwork.schema.transaction.{RewardTransaction, Transaction, TransactionAmount}
+import io.constellationnetwork.security.signature.Signed
+
+import eu.timepit.refined.refineV
+import eu.timepit.refined.numeric.Positive
+
+object MyRewards {
+  def make[F[_]: Async]: Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent] =
+    new Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent] {
+
+      private val rewardPerRound: Long = 100_000_000L // in datum units
+
+      override def distribute(
+        lastArtifact: Signed[CurrencyIncrementalSnapshot],
+        lastBalances: SortedMap[Address, Balance],
+        acceptedTransactions: SortedSet[Signed[Transaction]],
+        trigger: ConsensusTrigger,
+        events: Set[CurrencySnapshotEvent],
+        maybeCalculatedState: Option[DataCalculatedState] = None
+      ): F[SortedSet[RewardTransaction]] =
+        trigger match {
+          case EventTrigger => SortedSet.empty[RewardTransaction].pure[F]
+          case TimeTrigger =>
+            // Distribute equally to all facilitators that signed the last snapshot
+            val facilitators: List[Address] = lastArtifact.proofs.map(_.id).toList.map(_.toAddress)
+            val perFacilitator = rewardPerRound / Math.max(facilitators.size.toLong, 1L)
+
+            facilitators
+              .flatMap { address =>
+                refineV[Positive](perFacilitator).toOption.map { amount =>
+                  RewardTransaction(address, TransactionAmount(amount))
+                }
+              }
+              .toSortedSet
+              .pure[F]
+        }
+    }
+}
+```
+
+## Registering the rewards implementation
+
+Return your implementation from the `rewards` extension point in your `CurrencyL0App`:
+
+```scala
+object Main extends CurrencyL0App(...) {
+  override def rewards(
+    implicit sp: SecurityProvider[IO]
+  ): Option[Rewards[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]] =
+    Some(MyRewards.make[IO])
+}
+```
+
+<Warning>
+The total amount of `RewardTransaction` values you return must not exceed the epoch's minted amount. If your distribution mints tokens that don't exist in the supply schedule, the global L0 snapshot validation will reject the currency snapshot.
+</Warning>
+
+## Reward transaction type
+
+```scala
+case class RewardTransaction(destination: Address, amount: TransactionAmount)
+```
+
+Reward transactions are included directly in the currency snapshot and credited to the destination addresses when the snapshot is accepted by global L0.

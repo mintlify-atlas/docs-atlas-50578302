@@ -1,0 +1,195 @@
+---
+title: "Token Locks"
+description: "Create and query token lock transactions on the DAG L1 node."
+---
+
+Token locks allow DAG holders to lock their tokens on-chain for a specified or indefinite period. They are a prerequisite for delegated staking (via Global L0) and node collateral. An indefinite lock (`unlockEpoch: null`) is required for use as a delegated stake backing.
+
+<Note>
+  All endpoints return the following response headers:
+  - **X-Id** — The node's public key identifier
+  - **X-Session-Token** — The current cluster session token
+  - **Request-Signature** — Cryptographic signature of the response for verification
+</Note>
+
+<Info>
+  **Building a valid token lock:** Use `GET /token-locks/last-reference/{address}` to retrieve the `parent` values before creating a new token lock. The `parent.ordinal` of a new lock must be `lastOrdinal + 1`.
+</Info>
+
+---
+
+## POST /token-locks
+
+Submits a signed token lock transaction. If accepted, the lock enters the mempool and will be included in the next block, eventually appearing in a global snapshot.
+
+```bash
+curl -X POST https://<node-host>:9010/token-locks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "value": {
+      "source": "DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack",
+      "amount": 25000000000,
+      "fee": 0,
+      "parent": {
+        "ordinal": 0,
+        "hash": ""
+      },
+      "currencyId": null,
+      "unlockEpoch": null,
+      "replaceTokenLockRef": null
+    },
+    "proofs": [
+      { "id": "<public-key-hex>", "signature": "<ecdsa-der-hex>" }
+    ]
+  }'
+```
+
+**Request body** — `SignedTokenLock`
+
+<ParamField body="value" type="object" required>
+  The token lock transaction payload
+  <Expandable title="TokenLock">
+    <ParamField body="source" type="string" required>
+      Source wallet address creating the lock
+    </ParamField>
+    <ParamField body="amount" type="integer" required>
+      Amount to lock in datums (1 DAG = 100,000,000 datums)
+    </ParamField>
+    <ParamField body="fee" type="integer" required>
+      Transaction fee in datums
+    </ParamField>
+    <ParamField body="parent" type="object" required>
+      Reference to the previous token lock transaction for this address
+      <Expandable title="TokenLockReference">
+        <ParamField body="ordinal" type="integer" required>
+          Ordinal of the parent token lock. Use `0` for the first lock.
+        </ParamField>
+        <ParamField body="hash" type="string" required>
+          Hash of the parent token lock. Use empty string `""` for the first lock.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+    <ParamField body="currencyId" type="string">
+      Optional currency identifier. Set to `null` for DAG token locks.
+    </ParamField>
+    <ParamField body="unlockEpoch" type="integer">
+      Epoch at which the tokens unlock. Set to `null` for an indefinite lock (required for staking).
+    </ParamField>
+    <ParamField body="replaceTokenLockRef" type="string">
+      Hash of an existing token lock to replace (for increasing an existing lock's amount). Set to `null` for new locks.
+    </ParamField>
+  </Expandable>
+</ParamField>
+<ParamField body="proofs" type="array" required>
+  Array of cryptographic signature proofs from the source address owner
+  <Expandable title="SignatureProof">
+    <ParamField body="id" type="string" required>
+      Public key hex of the signer
+    </ParamField>
+    <ParamField body="signature" type="string" required>
+      ECDSA signature in DER format (hex-encoded)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+**Response `200 OK`**
+
+<ResponseField name="hash" type="string">
+  Hash of the accepted token lock transaction. Use this hash as `tokenLockRef` when creating a delegated stake or node collateral on the Global L0.
+</ResponseField>
+
+**Example response:**
+
+```json
+{
+  "hash": "a1b2c3d4e5f6789012345678901234567890123456789012345678901234567890"
+}
+```
+
+**Response `400 Bad Request`**
+
+The token lock transaction was rejected.
+
+<ResponseField name="errors" type="array">
+  Array of error cause objects with `message` fields describing the rejection reason
+</ResponseField>
+
+---
+
+## GET /token-locks/{hash}
+
+Returns the view of a token lock transaction currently in the L1 mempool. Once the transaction has been processed into a block and included in a global snapshot, this endpoint returns `404`.
+
+```bash
+curl https://<node-host>:9010/token-locks/a1b2c3d4e5f6789012345678901234567890
+```
+
+<ParamField path="hash" type="string" required>
+  The token lock transaction hash
+</ParamField>
+
+**Response `200 OK`**
+
+<ResponseField name="transaction" type="object">
+  The full token lock data (see `TokenLock` schema in `POST /token-locks`)
+</ResponseField>
+<ResponseField name="hash" type="string">
+  The transaction hash
+</ResponseField>
+<ResponseField name="status" type="string">
+  Current status in the mempool. Currently: `Waiting`
+</ResponseField>
+
+**Example response:**
+
+```json
+{
+  "transaction": {
+    "source": "DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack",
+    "amount": 25000000000,
+    "fee": 0,
+    "parent": { "ordinal": 0, "hash": "" },
+    "currencyId": null,
+    "unlockEpoch": null,
+    "replaceTokenLockRef": null
+  },
+  "hash": "a1b2c3d4e5f6...",
+  "status": "Waiting"
+}
+```
+
+**Response `404 Not Found`**
+
+No token lock with the given hash was found in the mempool. The transaction has either been processed into a block or was rejected.
+
+---
+
+## GET /token-locks/last-reference/{address}
+
+Returns the last token lock reference for a given address. **Call this before creating a new token lock** to obtain the correct `parent` values.
+
+```bash
+curl https://<node-host>:9010/token-locks/last-reference/DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack
+```
+
+<ParamField path="address" type="string" required>
+  DAG wallet address
+</ParamField>
+
+**Response `200 OK`**
+
+<ResponseField name="ordinal" type="integer">
+  Ordinal of the last token lock transaction. Use `ordinal + 1` as the new lock's parent ordinal.
+</ResponseField>
+<ResponseField name="hash" type="string">
+  Hash of the last token lock transaction. Use as the new lock's `parent.hash`. Returns empty string `""` if no prior token locks exist for this address.
+</ResponseField>
+
+**Example response:**
+
+```json
+{
+  "ordinal": 2,
+  "hash": "a1b2c3d4e5f6789012345678901234567890"
+}
+```

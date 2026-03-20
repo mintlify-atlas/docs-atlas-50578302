@@ -1,0 +1,205 @@
+---
+title: "Running a node"
+description: "How to run a Tessellation validator node using Docker (recommended) or SBT-built JARs."
+---
+
+Tessellation supports two approaches for running nodes: Docker-based (recommended for most users) and SBT-based (for building and running JARs directly). The Docker approach handles environment setup, peer joining, and health checks automatically.
+
+## Prerequisites
+
+<CardGroup cols={3}>
+  <Card title="Java 21" icon="coffee">
+    Required at runtime. Enforced at build time — Kryo serialization depends on Java 21 reflection.
+  </Card>
+  <Card title="SBT" icon="cube">
+    Required to compile and assemble JARs from source.
+  </Card>
+  <Card title="Docker" icon="docker">
+    Required for the Docker-based approach and the `just` test environment.
+  </Card>
+</CardGroup>
+
+## Node types
+
+Tessellation runs four distinct node types in a hierarchical consensus model:
+
+| Node | Module | Default ports | Role |
+|------|--------|---------------|------|
+| **Global L0** (`gl0`) | `dag-l0` | 9000 / 9001 / 9002 | Global consensus — aggregates all metagraph state channels into global snapshots |
+| **DAG L1** (`gl1`) | `dag-l1` | 9010 / 9011 / 9012 | Metagraph block creation; sends L1 blocks to Global L0 |
+| **Currency L0** (`ml0`) | `currency-l0` | 9020 / 9021 / 9022 | Currency metagraph L0; aggregates Currency L1 blocks into currency snapshots |
+| **Currency L1** (`cl1` / `dl1`) | `currency-l1` | 9030+ / 9031+ / 9032+ | Currency metagraph L1; handles end-user transactions |
+
+Each node exposes three ports: **public** (HTTP API), **p2p** (peer-to-peer), and **cli** (cluster management).
+
+## Docker-based approach (recommended)
+
+<Steps>
+  <Step title="Install just">
+    Install the `just` command runner. On macOS: `brew install just`. On Linux: see [casey/just](https://github.com/casey/just).
+  </Step>
+
+  <Step title="Configure your keystore">
+    Each node requires a PKCS12 keystore (`key.p12`). Generate one using the [keytool CLI](/operations/keytool):
+
+    ```bash
+    java -jar keytool.jar generate \
+      --keystore ./key.p12 \
+      --alias alias \
+      --password yourpassword
+    ```
+
+    Place the keystore at `./key.p12` (the default mount path) or set `CL_KEYSTORE_MOUNT_PATH` to a different path.
+  </Step>
+
+  <Step title="Start the environment">
+    ```bash
+    just up
+    ```
+
+    This calls `docker/bin/compose-runner.sh --up` and starts the configured node containers. To use pre-built JARs from a specific release instead of compiling from source:
+
+    ```bash
+    just up --hypergraph-release=v3.5.11
+    ```
+  </Step>
+
+  <Step title="Verify node health">
+    Each node exposes a health endpoint on its public port:
+
+    ```bash
+    # Global L0 (port 9000)
+    curl http://localhost:9000/node/health
+
+    # DAG L1 (port 9010)
+    curl http://localhost:9010/node/health
+
+    # Metagraph L0 (port 9020)
+    curl http://localhost:9020/node/health
+    ```
+
+    A healthy node returns HTTP 200.
+  </Step>
+
+  <Step title="Run the test suite">
+    ```bash
+    just test                  # Full test suite: compile + docker + all E2E tests
+    just test --skip-assembly  # Skip JAR compilation, reuse existing JARs
+    ```
+
+    Available test scenarios:
+
+    ```bash
+    just test --list-tests     # List all available test scenarios
+
+    # DAG tests (no metagraph required)
+    just test --test=dag-cluster
+    just test --test=delegated-staking
+    just test --test=token-lock-replacement
+    just test --test=snapshot-streaming
+
+    # Metagraph tests (require --use-test-metagraph)
+    just test --test=currency
+    just test --test=rewards
+    just test --test=token-locks
+    just test --test=allow-spends
+    ```
+  </Step>
+
+  <Step title="Stop the environment">
+    ```bash
+    just down
+    ```
+  </Step>
+</Steps>
+
+## SBT-based approach
+
+Build JARs from source and run them directly with `java -jar`.
+
+<Steps>
+  <Step title="Compile and assemble JARs">
+    ```bash
+    sbt compile          # Compile all modules
+    sbt dagL0/assembly   # Assemble Global L0 JAR
+    sbt dagL1/assembly   # Assemble DAG L1 JAR
+    ```
+
+    JARs are written to each module's `target/scala-2.13/` directory.
+  </Step>
+
+  <Step title="Set environment variables">
+    Each node reads configuration from environment variables:
+
+    ```bash
+    export CL_KEYSTORE=/path/to/key.p12
+    export CL_PASSWORD=yourpassword
+    export CL_PUBLIC_HTTP_PORT=9000
+    export CL_P2P_HTTP_PORT=9001
+    export CL_CLI_HTTP_PORT=9002
+    export CL_EXTERNAL_IP=<your-public-ip>
+    export CL_COLLATERAL=0
+    ```
+  </Step>
+
+  <Step title="Add Java 21 module flags">
+    Kryo serialization requires additional JVM flags for Java 21 module access:
+
+    ```bash
+    export JAVA_OPTS="\
+      --add-opens=java.base/java.lang.invoke=ALL-UNNAMED \
+      --add-opens=java.base/java.util=ALL-UNNAMED \
+      --add-opens=java.base/java.security=ALL-UNNAMED"
+    ```
+  </Step>
+
+  <Step title="Run the node">
+    <CodeGroup>
+      ```bash Global L0
+      java $JAVA_OPTS \
+        -jar modules/dag-l0/target/scala-2.13/dag-l0-assembly-*.jar \
+        run-validator
+      ```
+
+      ```bash DAG L1
+      java $JAVA_OPTS \
+        -jar modules/dag-l1/target/scala-2.13/dag-l1-assembly-*.jar \
+        run-validator
+      ```
+
+      ```bash Genesis (first boot only)
+      java $JAVA_OPTS \
+        -jar modules/dag-l0/target/scala-2.13/dag-l0-assembly-*.jar \
+        run-genesis /path/to/genesis.csv
+      ```
+    </CodeGroup>
+  </Step>
+</Steps>
+
+## Environment variables reference
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CL_KEYSTORE` | — | Path to PKCS12 keystore inside the container |
+| `CL_PASSWORD` | — | Keystore password (sets both store and key password) |
+| `CL_PUBLIC_HTTP_PORT` | `9000` | Public HTTP API port |
+| `CL_P2P_HTTP_PORT` | `9001` | Peer-to-peer HTTP port |
+| `CL_CLI_HTTP_PORT` | `9002` | CLI/cluster management port |
+| `CL_EXTERNAL_IP` | Auto-detected | Public IP announced to peers |
+| `CL_COLLATERAL` | — | Node collateral amount |
+| `CL_L0_PEER_HTTP_HOST` | `gl0` | Hostname of the L0 peer to connect to |
+| `CL_L0_PEER_HTTP_PORT` | `9000` | Port of the L0 peer |
+| `CL_L0_PEER_ID` | — | Node ID of the L0 peer |
+| `CL_DOCKER_GENESIS` | `false` | Boot in genesis mode |
+| `CL_DOCKER_ROLLBACK` | `false` | Rollback to a previous snapshot hash |
+| `CL_DOCKER_ROLLBACK_HASH` | — | Hash of the snapshot to roll back to |
+
+## Health check endpoints
+
+```bash
+GET /node/health          # Liveness: returns 200 when the process is up
+GET /node/info            # Node metadata: version, cluster ID, state
+GET /cluster/info         # Current cluster peers
+```
+
+The Docker healthcheck runs `internal-health-check.sh` which calls `GET /node/health` on the node's configured public port.

@@ -1,0 +1,189 @@
+---
+title: "Wallet"
+description: "CLI for interacting with the DAG network — sign transactions, query addresses, manage delegated stakes and token locks."
+---
+
+The `wallet` module is a command-line interface for interacting with the Constellation Network DAG layer. It reads a PKCS12 keystore to derive your node/wallet identity and can sign transactions, query addresses, and manage staking operations without running a full node.
+
+## Running the wallet CLI
+
+All wallet commands share a set of common environment flags:
+
+```bash
+java -jar wallet.jar \
+  --keystore ./key.p12 \
+  --alias alias \
+  --password yourpassword \
+  <command> [command-flags]
+```
+
+If your keystore uses separate store and key passwords:
+
+```bash
+java -jar wallet.jar \
+  --keystore ./key.p12 \
+  --alias alias \
+  --storepass storePwd \
+  --keypass keyPwd \
+  <command> [command-flags]
+```
+
+<Note>
+  The wallet JAR is available inside Docker containers at `/tessellation/jars/wallet.jar`. It is used internally by the entrypoint script to derive node IDs: `java -jar /tessellation/jars/wallet.jar show-id`.
+</Note>
+
+## Identity commands
+
+### `show-address`
+
+Derive and print the DAG address for the key in the keystore.
+
+```bash
+java -jar wallet.jar --keystore ./key.p12 --alias alias --password pw \
+  show-address
+```
+
+Outputs a DAG address (e.g., `DAG4abc...`).
+
+### `show-id`
+
+Derive and print the node ID (uncompressed public key as hex). This is the identifier used when joining a cluster.
+
+```bash
+java -jar wallet.jar --keystore ./key.p12 --alias alias --password pw \
+  show-id
+```
+
+### `show-public-key`
+
+Print the raw public key bytes in hex format.
+
+```bash
+java -jar wallet.jar --keystore ./key.p12 --alias alias --password pw \
+  show-public-key
+```
+
+## Transaction commands
+
+### `create-transaction`
+
+Sign and serialize a DAG transaction to a file. Transactions form an ordinal chain — each transaction references the previous one via `--prevTxPath`.
+
+```bash
+java -jar wallet.jar --keystore ./key.p12 --alias alias --password pw \
+  create-transaction \
+  --destination DAG4destinationAddress \
+  --amount 10 \
+  --fee 0 \
+  --prevTxPath ./prev-tx.json \
+  --nextTxPath ./next-tx.json
+```
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--destination` | `-d` | Destination DAG address |
+| `--amount` | `-a` | Amount of DAG to send (in whole DAG units; multiplied by 1e8 unless `--normalized`) |
+| `--fee` | — | Transaction fee (default: `0`) |
+| `--normalized` | `-n` | Flag: treat amount as already normalized (i.e., in datum units) |
+| `--prevTxPath` | `-p` | Path to the previously created transaction JSON file (omit for the first transaction) |
+| `--nextTxPath` | `-f` | Path where the new signed transaction JSON is written |
+
+<Note>
+  Tessellation transactions form an ordinal chain. Each transaction must reference the previous one (by hash and ordinal). Always pass the output of the previous `create-transaction` call as `--prevTxPath` for subsequent transactions.
+</Note>
+
+## Staking commands
+
+### `create-token-lock`
+
+Lock DAG tokens as a prerequisite to delegated staking.
+
+```bash
+java -jar wallet.jar --keystore ./key.p12 --alias alias --password pw \
+  create-token-lock \
+  --amount 500 \
+  --fee 0 \
+  --parent ./prev-lock.json \
+  --unlockEpoch 1000000
+```
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--amount` | `-a` | Amount of DAG to lock |
+| `--fee` | — | Token lock fee (default: `0`) |
+| `--parent` | `-p` | Parent lock reference file (formatted as API response) |
+| `--currencyId` | `-c` | Metagraph currency address (default: DAG) |
+| `--unlockEpoch` | `-u` | Epoch at which tokens unlock (default: infinite) |
+| `--replace` | `-r` | Hash of an existing token lock to replace |
+
+### `create-delegated-stake`
+
+Create a delegated stake referencing an active token lock.
+
+```bash
+java -jar wallet.jar --keystore ./key.p12 --alias alias --password pw \
+  create-delegated-stake \
+  --amount 500 \
+  --token-lock <token-lock-hash> \
+  --nodeId <node-id> \
+  --parent ./prev-stake.json
+```
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--amount` | `-a` | Amount of DAG to stake (must match the token lock amount) |
+| `--token-lock` | — | Hash reference to an active token lock |
+| `--nodeId` | — | ID of the node to delegate to (defaults to self) |
+| `--fee` | — | Delegated stake fee (default: `0`) |
+| `--parent` | `-p` | Parent reference file |
+
+### `withdraw-delegated-stake`
+
+Withdraw an existing delegated stake.
+
+```bash
+java -jar wallet.jar --keystore ./key.p12 --alias alias --password pw \
+  withdraw-delegated-stake \
+  --stake-ref <stake-hash>
+```
+
+| Flag | Description |
+|------|-------------|
+| `--stake-ref` | Hash reference to the active delegated stake to withdraw |
+
+## Node parameter commands
+
+### `create-node-params`
+
+Set node parameters such as the reward fraction and display name. These are submitted on-chain and affect delegated staking reward distribution.
+
+```bash
+java -jar wallet.jar --keystore ./key.p12 --alias alias --password pw \
+  create-node-params \
+  --reward-fraction 0.05 \
+  --name "My Node" \
+  --description "Main validator node" \
+  --parent ./prev-params.json
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--reward-fraction` | `0.05` | Fraction of delegated stake rewards going to the node operator (e.g., `0.05` = 5%) |
+| `--name` | `node_name` | Human-readable node name |
+| `--description` | `node_description` | Node description |
+| `--parent` | `-p` | Parent reference file |
+
+## Transaction chain model
+
+Tessellation transactions use an ordinal chain model. Each transaction references the previous one, forming an append-only chain per sender address:
+
+```
+[Genesis tx] → [tx ordinal=1] → [tx ordinal=2] → ...
+```
+
+When creating transactions with the wallet CLI:
+1. For the **first** transaction from an address, omit `--prevTxPath`.
+2. For all **subsequent** transactions, pass the output file of the previous transaction as `--prevTxPath`.
+3. The signed output file (written to `--nextTxPath`) becomes the input for the next transaction.
+
+This chain must be maintained to prevent double-spend and replay attacks.

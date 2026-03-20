@@ -1,0 +1,174 @@
+---
+title: "Custom validators"
+description: "Add metagraph-specific transaction validation rules using the transactionValidator extension point."
+---
+
+The `transactionValidator` extension point on `CurrencyL1App` lets you plug in custom validation logic that runs after all built-in checks pass. A transaction is rejected if your validator returns `Left`.
+
+## Built-in validation pipeline
+
+Before your custom validator runs, the framework already applies these checks in order:
+
+1. **`validateNotLocked`** — rejects transactions from addresses on the locked-address list.
+2. **`validateLastTransactionRef`** — ensures the parent ordinal is not lower than the last processed transaction ordinal.
+3. **`validateConflictAtOrdinal`** — detects ordinal conflicts and resolves them by fee priority.
+4. **`validateBalances`** — checks that the source address has sufficient balance.
+5. **`validateLimit`** — enforces the transaction rate limit based on balance and epoch distance.
+
+Only if all five pass does the framework invoke your `CustomContextualTransactionValidator`.
+
+## The `CustomContextualTransactionValidator` trait
+
+```scala
+// dag-l1/domain/transaction/ContextualTransactionValidator.scala
+trait CustomContextualTransactionValidator {
+  def validate(
+    hashedTransaction: Hashed[Transaction],
+    context: TransactionValidatorContext
+  ): Either[CustomValidationError, Hashed[Transaction]]
+}
+```
+
+Return `Right(hashedTransaction)` to accept, or `Left(CustomValidationError(message))` to reject.
+
+## The validation context
+
+Your validator receives a `TransactionValidatorContext` with the state of the source account at the time of validation:
+
+```scala
+case class TransactionValidatorContext(
+  sourceTransactions: Option[SortedMap[TransactionOrdinal, StoredTransaction]],
+  sourceBalance: Balance,
+  sourceLastTransactionRef: TransactionReference,
+  currentOrdinal: SnapshotOrdinal
+)
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `sourceTransactions` | `Option[SortedMap[TransactionOrdinal, StoredTransaction]]` | Pending transactions from the same source, `None` if the source has no history |
+| `sourceBalance` | `Balance` | Current confirmed balance of the source address |
+| `sourceLastTransactionRef` | `TransactionReference` | The last accepted transaction reference for the source |
+| `currentOrdinal` | `SnapshotOrdinal` | Ordinal of the snapshot being built |
+
+## Built-in validation error types
+
+These errors are produced by the built-in pipeline. Your custom validator adds `CustomValidationError` to this set:
+
+```scala
+sealed trait ContextualTransactionValidationError
+
+case class ParentOrdinalLowerThenLastProcessedTxOrdinal(
+  parentOrdinal: TransactionOrdinal,
+  lastTxOrdinal: TransactionOrdinal
+) extends ContextualTransactionValidationError
+
+case class HasNoMatchingParent(parentHash: Hash)
+  extends ContextualTransactionValidationError
+
+case class Conflict(
+  ordinal: TransactionOrdinal,
+  existingHash: Hash,
+  newHash: Hash
+) extends ContextualTransactionValidationError
+
+case class InsufficientBalance(amount: Amount, balance: Balance)
+  extends ContextualTransactionValidationError
+
+case class TransactionLimited(ref: TransactionReference, fee: TransactionFee)
+  extends ContextualTransactionValidationError
+
+case class LockedAddressError(address: Address)
+  extends ContextualTransactionValidationError
+
+case class CustomValidationError(message: String)
+  extends ContextualTransactionValidationError
+```
+
+## Implementing a custom validator
+
+The following example rejects transactions whose amount exceeds a metagraph-defined ceiling:
+
+```scala
+import io.constellationnetwork.dag.l1.domain.transaction.{
+  ContextualTransactionValidator,
+  CustomContextualTransactionValidator,
+  TransactionValidatorContext
+}
+import io.constellationnetwork.dag.l1.domain.transaction.ContextualTransactionValidator.CustomValidationError
+import io.constellationnetwork.schema.balance.Amount
+import io.constellationnetwork.security.Hashed
+import io.constellationnetwork.schema.transaction.Transaction
+
+object MaxAmountValidator extends CustomContextualTransactionValidator {
+
+  private val maxAllowedAmount: Long = 1_000_000_000L // in datum units
+
+  override def validate(
+    hashedTransaction: Hashed[Transaction],
+    context: TransactionValidatorContext
+  ): Either[CustomValidationError, Hashed[Transaction]] =
+    if (hashedTransaction.amount.value.value <= maxAllowedAmount)
+      Right(hashedTransaction)
+    else
+      Left(CustomValidationError(
+        s"Transaction amount ${hashedTransaction.amount.value} exceeds metagraph maximum of $maxAllowedAmount"
+      ))
+}
+```
+
+## Registering the validator
+
+Return your implementation from the `transactionValidator` extension point in `CurrencyL1App`:
+
+```scala
+object MainL1 extends CurrencyL1App(...) {
+  override def transactionValidator: Option[CustomContextualTransactionValidator] =
+    Some(MaxAmountValidator)
+}
+```
+
+## Combining multiple rules
+
+Compose multiple rules by chaining `Either` operations:
+
+```scala
+object CompositeValidator extends CustomContextualTransactionValidator {
+
+  private val validators: List[CustomContextualTransactionValidator] = List(
+    MaxAmountValidator,
+    AllowlistValidator,
+    BusinessHoursValidator
+  )
+
+  override def validate(
+    hashedTransaction: Hashed[Transaction],
+    context: TransactionValidatorContext
+  ): Either[CustomValidationError, Hashed[Transaction]] =
+    validators.foldLeft[Either[CustomValidationError, Hashed[Transaction]]](Right(hashedTransaction)) {
+      case (Right(tx), validator) => validator.validate(tx, context)
+      case (left, _)              => left
+    }
+}
+```
+
+<Note>
+Custom validators run synchronously inside the L1 node's validation pipeline. Keep your logic fast and avoid blocking I/O. If you need asynchronous checks, implement them in the data application layer instead.
+</Note>
+
+## Accessing transaction fields
+
+The `Hashed[Transaction]` value gives you access to all transaction fields:
+
+```scala
+val tx: Hashed[Transaction] = ...
+
+tx.source      // Address — sender
+tx.destination // Address — receiver
+tx.amount      // TransactionAmount
+tx.fee         // TransactionFee
+tx.parent      // TransactionReference — previous transaction reference
+tx.ordinal     // TransactionOrdinal
+tx.salt        // Long — uniqueness salt
+tx.hash        // Hash — SHA-256 of the transaction
+```

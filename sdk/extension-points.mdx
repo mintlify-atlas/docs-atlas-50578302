@@ -1,0 +1,205 @@
+---
+title: "Extension points"
+description: "Hooks in CurrencyL0App and CurrencyL1App that metagraph developers can override to customize metagraph behavior."
+---
+
+Both `CurrencyL0App` and `CurrencyL1App` expose extension points through the `OverridableL0` and `OverridableL1` traits. All extension points return `None` or `null` by default, meaning the node falls back to the built-in behavior.
+
+## L0 extension points
+
+Defined in `OverridableL0` (mixed into `CurrencyL0App`):
+
+```scala
+trait OverridableL0 extends TessellationIOApp[Run] {
+  def dataApplication: Option[Resource[IO, BaseDataApplicationL0Service[IO]]] = None
+
+  def rewards(
+    implicit sp: SecurityProvider[IO]
+  ): Option[Rewards[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]] = None
+
+  def customArtifacts(
+    lastCurrencySnapshot: Signed[CurrencyIncrementalSnapshot]
+  ): Option[SortedSet[SharedArtifact]] = None
+}
+```
+
+## L1 extension points
+
+Defined in `OverridableL1` (mixed into `CurrencyL1App`):
+
+```scala
+trait OverridableL1 extends TessellationIOApp[Run] {
+  def dataApplication: Option[Resource[IO, BaseDataApplicationL1Service[IO]]] = None
+  def transactionValidator: Option[CustomContextualTransactionValidator] = None
+  def transactionFeeEstimator: Option[TransactionFeeEstimator[IO]] = None
+  def setTokenLockLimits: Option[TokenLockLimitsConfig] = None
+}
+```
+
+---
+
+## `dataApplication`
+
+<Tabs>
+  <Tab title="L0">
+
+**Method:** `def dataApplication: Option[Resource[IO, BaseDataApplicationL0Service[IO]]]`
+
+**Default:** `None` — no custom data blocks are included in currency snapshots.
+
+**What it does:** Provides a service that handles the L0 side of custom data consensus. When set, the node accepts custom `DataUpdate` messages, runs `validateData` and `combine` during snapshot consensus, and stores the resulting `DataState` in the snapshot.
+
+**When it is called:** The L0 node calls `validateData` and `combine` during every snapshot consensus round in which data blocks are present. `onSnapshotConsensusResult` is called after a snapshot is finalized.
+
+**Key methods you implement:**
+
+```scala
+trait DataApplicationL0Service[F[_], D <: DataUpdate, DON <: DataOnChainState, DOF <: DataCalculatedState] {
+  def genesis: DataState[DON, DOF]
+
+  def validateData(
+    state: DataState[DON, DOF],
+    updates: NonEmptyList[Signed[D]]
+  )(implicit context: L0NodeContext[F]): F[DataApplicationValidationErrorOr[Unit]]
+
+  def combine(
+    state: DataState[DON, DOF],
+    updates: List[Signed[D]]
+  )(implicit context: L0NodeContext[F]): F[DataState[DON, DOF]]
+
+  def getCalculatedState(implicit context: L0NodeContext[F]): F[(SnapshotOrdinal, DOF)]
+  def setCalculatedState(ordinal: SnapshotOrdinal, state: DOF)(implicit context: L0NodeContext[F]): F[Boolean]
+  def hashCalculatedState(state: DOF)(implicit context: L0NodeContext[F]): F[Hash]
+
+  def onSnapshotConsensusResult(snapshot: Hashed[CurrencyIncrementalSnapshot])(implicit A: Applicative[F]): F[Unit]
+  def onGlobalSnapshotPull(snapshot: Hashed[GlobalIncrementalSnapshot], context: GlobalSnapshotInfo)(implicit A: Applicative[F]): F[Unit]
+}
+```
+
+  </Tab>
+  <Tab title="L1">
+
+**Method:** `def dataApplication: Option[Resource[IO, BaseDataApplicationL1Service[IO]]]`
+
+**Default:** `None` — data application consensus is disabled; the L1 node runs standard transaction-only consensus.
+
+**What it does:** Enables custom data block consensus on the L1 node. When set, the node exposes HTTP routes for submitting `DataUpdate` objects, runs L1 validation via `validateUpdate`, and forwards accepted data blocks to L0.
+
+**Key method you implement:**
+
+```scala
+trait DataApplicationL1Service[F[_], D <: DataUpdate, DON <: DataOnChainState, DOF <: DataCalculatedState] {
+  def validateUpdate(update: D)(implicit context: L1NodeContext[F]): F[DataApplicationValidationErrorOr[Unit]]
+
+  def estimateFee(gsOrdinal: SnapshotOrdinal)(update: D)(
+    implicit context: L1NodeContext[F],
+    A: Applicative[F]
+  ): F[EstimatedFee]
+}
+```
+
+  </Tab>
+</Tabs>
+
+---
+
+## `rewards`
+
+**Layer:** L0 only
+
+**Method:** `def rewards(implicit sp: SecurityProvider[IO]): Option[Rewards[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]]`
+
+**Default:** `None` — the node uses the built-in reward schedule with no custom distribution.
+
+**What it does:** Replaces the default reward calculation for this metagraph. On every `TimeTrigger` consensus round, the node calls `distribute` and includes the returned `RewardTransaction` set in the currency snapshot.
+
+**Interface:**
+
+```scala
+trait Rewards[F[_], P <: StateProof, S <: IncrementalSnapshot[P], E] {
+  def distribute(
+    lastArtifact: Signed[S],
+    lastBalances: SortedMap[Address, Balance],
+    acceptedTransactions: SortedSet[Signed[Transaction]],
+    trigger: ConsensusTrigger,
+    events: Set[E],
+    maybeCalculatedState: Option[DataCalculatedState] = None
+  ): F[SortedSet[RewardTransaction]]
+}
+```
+
+See [Custom rewards](/sdk/custom-rewards) for implementation guidance.
+
+---
+
+## `transactionValidator`
+
+**Layer:** L1 only
+
+**Method:** `def transactionValidator: Option[CustomContextualTransactionValidator]`
+
+**Default:** `None` — only the built-in balance, ordinal, and rate-limit checks run.
+
+**What it does:** Adds a custom validation step that runs after all built-in checks pass. Returning a `Left(CustomValidationError(...))` rejects the transaction.
+
+**Interface:**
+
+```scala
+trait CustomContextualTransactionValidator {
+  def validate(
+    hashedTransaction: Hashed[Transaction],
+    context: TransactionValidatorContext
+  ): Either[CustomValidationError, Hashed[Transaction]]
+}
+```
+
+See [Custom validators](/sdk/custom-validators) for implementation guidance.
+
+---
+
+## `customArtifacts`
+
+**Layer:** L0 only
+
+**Method:** `def customArtifacts(lastCurrencySnapshot: Signed[CurrencyIncrementalSnapshot]): Option[SortedSet[SharedArtifact]]`
+
+**Default:** `None` — no additional artifacts are included.
+
+**What it does:** Returns a set of `SharedArtifact` values to include in the next currency snapshot. This is useful for emitting additional on-chain data beyond the standard transaction and data application state.
+
+---
+
+## `transactionFeeEstimator`
+
+**Layer:** L1 only
+
+**Method:** `def transactionFeeEstimator: Option[TransactionFeeEstimator[IO]]`
+
+**Default:** `None` — fee estimation uses the built-in heuristic.
+
+**What it does:** Replaces the fee estimation logic exposed by the L1 REST API. Wallets query this endpoint before submitting transactions.
+
+---
+
+## `setTokenLockLimits`
+
+**Layer:** L1 only
+
+**Method:** `def setTokenLockLimits: Option[TokenLockLimitsConfig]`
+
+**Default:** `None` — default token lock limits apply.
+
+**What it does:** Overrides the maximum and minimum token lock amounts enforced by this metagraph's L1 node.
+
+---
+
+## Default behavior summary
+
+| Extension point | Layer | Default when `None` |
+|---|---|---|
+| `dataApplication` | L0 + L1 | No custom data blocks |
+| `rewards` | L0 | Built-in reward schedule |
+| `customArtifacts` | L0 | No extra snapshot artifacts |
+| `transactionValidator` | L1 | Built-in checks only |
+| `transactionFeeEstimator` | L1 | Built-in fee heuristic |
+| `setTokenLockLimits` | L1 | Default limits |

@@ -1,97 +1,95 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Tessellation"
+description: "Constellation Network Node Software — a DAG-based distributed ledger with Layer 0 global consensus and Layer 1 metagraph validators"
 ---
 
-## Setting up
-
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get a node running locally with Docker in under 10 minutes.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Architecture Overview" icon="sitemap" href="/architecture-overview">
+    Understand the hierarchical DAG consensus model and module layout.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Metagraph SDK" icon="cube" href="/sdk/overview">
+    Build custom data applications on the Constellation Network.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="API Reference" icon="code" href="/api/l0/cluster">
+    Explore the full REST APIs for L0 and L1 nodes.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## What is Tessellation?
 
-Everything you need to create world-class documentation.
+Tessellation implements a hierarchical DAG (Directed Acyclic Graph) consensus protocol where **Layer 1 metagraphs** create blocks that **Layer 0** aggregates into global snapshots. This architecture enables scalable, parallel transaction processing across multiple metagraphs while maintaining a unified global state.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+Written in **Scala 2.13** with **Cats Effect 3** for purely functional, resource-safe concurrency.
 
-## Need inspiration?
+```
+L1 Metagraph Nodes  →  Currency L0  →  Global L0  →  Global Snapshots
+      (blocks)           (snapshots)    (consensus)     (final state)
+```
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Hierarchical DAG consensus" icon="diagram-project">
+    L1 creates blocks, L0 aggregates into global snapshots with multi-phase FSM consensus rounds.
+  </Card>
+  <Card title="Extensible metagraph SDK" icon="puzzle-piece">
+    Override rewards, validators, and data application hooks to build custom on-chain logic.
+  </Card>
+  <Card title="Anti-entropy gossip" icon="wifi">
+    Resilient peer-to-peer state sync via origin-specific and content-addressed rumors.
+  </Card>
+  <Card title="Merkle Patricia Trie proofs" icon="shield-check">
+    Verifiable state proofs computed per snapshot for cryptographic integrity.
+  </Card>
+  <Card title="Delegated staking" icon="coins">
+    Token lock-based staking with configurable node assignment and epoch-based rewards.
+  </Card>
+  <Card title="Kubernetes-native" icon="server">
+    Production deployments via Kustomize overlays, Skaffold, and Docker Compose profiles.
+  </Card>
+</CardGroup>
+
+## Module layout
+
+Tessellation is organized as a multi-module SBT project:
+
+| Module | Purpose |
+|--------|---------|
+| `shared` | Core data structures, cryptography, serialization |
+| `kernel` | Recursion schemes (Droste), category theory abstractions |
+| `node-shared` | P2P networking, consensus engine, gossip protocol |
+| `dag-l0` | Global Layer 0 validator — aggregates all metagraph state |
+| `dag-l1` | Layer 1 validator — metagraph block creation and consensus |
+| `currency-l0` | Currency metagraph L0 with extension points |
+| `currency-l1` | Currency metagraph L1 with extension points |
+| `sdk` | Stable API facade for metagraph developers |
+| `keytool` | Key management and PKCS12 keystore operations |
+| `wallet` | CLI wallet: transactions, delegated stakes, token locks |
+| `rosetta` | Coinbase Rosetta API v1.4.14 implementation |
+
+## Tech stack
+
+- **Scala 2.13.18** with **Java 21** (enforced at build time)
+- **Cats Effect 3** — async/IO and resource lifecycle
+- **FS2** — streaming with backpressure
+- **HTTP4s** (Ember) — HTTP server and client
+- **Circe** — JSON serialization with Brotli compression
+- **BouncyCastle** — ECDSA cryptography
+- **Refined types** — compile-time validation
+
+## Get started
+
+<CardGroup cols={3}>
+  <Card title="Run a node" icon="play" href="/operations/running-a-node">
+    Start a local L0 + L1 environment with Docker Compose.
+  </Card>
+  <Card title="Core concepts" icon="book" href="/concepts/dag-consensus">
+    Learn how DAG consensus, snapshots, and metagraphs work.
+  </Card>
+  <Card title="Build a metagraph" icon="wrench" href="/sdk/getting-started">
+    Use the SDK to extend Currency L0/L1 with custom logic.
+  </Card>
+</CardGroup>

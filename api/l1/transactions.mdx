@@ -1,0 +1,215 @@
+---
+title: "Transactions"
+description: "Submit and query $DAG transactions on the DAG L1 node."
+---
+
+DAG L1 transactions are the primary mechanism for transferring $DAG tokens between addresses. Transactions are submitted to an L1 node, validated, assembled into blocks, and eventually finalized in a global snapshot.
+
+<Note>
+  All endpoints return the following response headers:
+  - **X-Id** — The node's public key identifier
+  - **X-Session-Token** — The current cluster session token
+  - **Request-Signature** — Cryptographic signature of the response for verification
+</Note>
+
+<Info>
+  **Building a valid transaction:** Each transaction must reference its parent — the previous transaction from the same source address. Use `GET /transactions/last-reference/{address}` to retrieve the correct `parent.hash` and `parent.ordinal` before constructing a new transaction. The new transaction's ordinal must be exactly `parent.ordinal + 1`.
+</Info>
+
+---
+
+## POST /transactions
+
+Submits a signed $DAG transaction for processing. If accepted, the transaction enters the node's mempool and will be included in the next block.
+
+```bash
+curl -X POST https://<node-host>:9010/transactions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "value": {
+      "source": "DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack",
+      "destination": "DAG2rMPHX4w1cMMJowmewRMjD1in53yRURt6Eijh",
+      "amount": 100000000,
+      "fee": 0,
+      "parent": {
+        "hash": "",
+        "ordinal": 0
+      },
+      "salt": 6018762703199813000
+    },
+    "proofs": [
+      { "id": "<public-key-hex>", "signature": "<ecdsa-der-hex>" }
+    ]
+  }'
+```
+
+**Request body** — `SignedTransaction`
+
+<ParamField body="value" type="object" required>
+  The transaction payload
+  <Expandable title="Transaction">
+    <ParamField body="source" type="string" required>
+      Source wallet address (must begin with `DAG`)
+    </ParamField>
+    <ParamField body="destination" type="string" required>
+      Destination wallet address (must be different from source)
+    </ParamField>
+    <ParamField body="amount" type="integer" required>
+      Amount to transfer in datums (1 DAG = 100,000,000 datums)
+    </ParamField>
+    <ParamField body="fee" type="integer" required>
+      Transaction fee in datums (can be 0 subject to rate limits)
+    </ParamField>
+    <ParamField body="parent" type="object" required>
+      Reference to the previous accepted transaction from the source address
+      <Expandable title="TransactionReference">
+        <ParamField body="hash" type="string" required>
+          Hash of the parent transaction. Use empty string `""` for the first transaction.
+        </ParamField>
+        <ParamField body="ordinal" type="integer" required>
+          Ordinal of the parent transaction. Use `0` for the first transaction.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+    <ParamField body="salt" type="integer" required>
+      Random 64-bit integer for uniqueness (prevents hash collisions between otherwise identical transactions)
+    </ParamField>
+  </Expandable>
+</ParamField>
+<ParamField body="proofs" type="array" required>
+  Array of cryptographic signature proofs. Must be signed by the source address owner.
+  <Expandable title="SignatureProof">
+    <ParamField body="id" type="string" required>
+      Public key hex of the signing key
+    </ParamField>
+    <ParamField body="signature" type="string" required>
+      ECDSA signature in DER format (hex-encoded)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+**Response `200 OK`**
+
+<ResponseField name="hash" type="string">
+  Hash of the accepted transaction. Use this to look up the transaction status via `GET /transactions/{hash}`.
+</ResponseField>
+
+**Example response:**
+
+```json
+{
+  "hash": "a1b2c3d4e5f6789012345678901234567890123456789012345678901234567890"
+}
+```
+
+**Response `400 Bad Request`**
+
+The transaction was rejected. The error response includes one of the following rejection reasons:
+
+<ResponseField name="errors" type="array">
+  <Expandable title="Rejection reasons">
+    <ResponseField name="TransactionLimited" type="string">
+      The fee-less transaction rate limit for this address has been exceeded. The limit depends on the address balance and time elapsed since the last accepted transaction.
+    </ResponseField>
+    <ResponseField name="ParentOrdinalLowerThenLastTxOrdinal" type="string">
+      The transaction's parent ordinal is lower than the last accepted transaction's ordinal. The new ordinal must be exactly `lastOrdinal + 1`.
+    </ResponseField>
+    <ResponseField name="HasNoMatchingParent" type="string">
+      The parent hash does not match any known accepted transaction for this address.
+    </ResponseField>
+    <ResponseField name="InsufficientBalance" type="string">
+      The transaction amount exceeds the source address balance.
+    </ResponseField>
+    <ResponseField name="AddressLocked" type="string">
+      The source address is locked by the network and cannot send transactions.
+    </ResponseField>
+    <ResponseField name="Conflict" type="string">
+      A transaction with this hash has already been accepted by the network.
+    </ResponseField>
+    <ResponseField name="SameSourceAndDestinationAddress" type="string">
+      The source and destination addresses must be different.
+    </ResponseField>
+    <ResponseField name="NotSignedBySourceAddressOwner" type="string">
+      The transaction signature does not correspond to the source address's key.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## GET /transactions/{hash}
+
+Returns the current view of a $DAG transaction in the L1 mempool for the given hash. Only transactions currently in the mempool are returned — once a transaction is included in a block and a global snapshot, this endpoint returns `400`.
+
+```bash
+curl https://<node-host>:9010/transactions/a1b2c3d4e5f6789012345678901234567890
+```
+
+<ParamField path="hash" type="string" required>
+  The transaction hash (hex-encoded SHA-256)
+</ParamField>
+
+**Response `200 OK`**
+
+<ResponseField name="transaction" type="object">
+  The full transaction data (see `Transaction` schema in `POST /transactions`)
+</ResponseField>
+<ResponseField name="hash" type="string">
+  The transaction hash
+</ResponseField>
+<ResponseField name="status" type="string">
+  Current status of the transaction in the mempool. Currently: `Waiting`
+</ResponseField>
+
+**Example response:**
+
+```json
+{
+  "transaction": {
+    "source": "DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack",
+    "destination": "DAG2rMPHX4w1cMMJowmewRMjD1in53yRURt6Eijh",
+    "amount": 100000000,
+    "fee": 0,
+    "parent": { "hash": "", "ordinal": 0 },
+    "salt": 6018762703199813000
+  },
+  "hash": "a1b2c3d4e5f6...",
+  "status": "Waiting"
+}
+```
+
+**Response `400 Bad Request`**
+
+No transaction with the given hash is found in the mempool. The transaction may have already been processed into a block, or the hash may be invalid.
+
+---
+
+## GET /transactions/last-reference/{address}
+
+Returns the last accepted $DAG transaction reference for a given address. **Always call this endpoint before constructing a new transaction** to get the correct `parent` values.
+
+```bash
+curl https://<node-host>:9010/transactions/last-reference/DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack
+```
+
+<ParamField path="address" type="string" required>
+  DAG wallet address
+</ParamField>
+
+**Response `200 OK`**
+
+<ResponseField name="ordinal" type="integer">
+  Ordinal of the last accepted transaction. Use `ordinal + 1` as your new transaction's parent ordinal.
+</ResponseField>
+<ResponseField name="hash" type="string">
+  Hash of the last accepted transaction. Use this as your new transaction's `parent.hash`. Returns empty string `""` for addresses with no prior transactions.
+</ResponseField>
+
+**Example response:**
+
+```json
+{
+  "ordinal": 15,
+  "hash": "a1b2c3d4e5f6789012345678901234567890"
+}
+```

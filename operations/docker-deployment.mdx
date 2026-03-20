@@ -1,0 +1,206 @@
+---
+title: "Docker deployment"
+description: "Run Tessellation nodes with Docker Compose using just commands — full multi-node clusters with health checks, volume mounts, and metagraph support."
+---
+
+Tessellation ships a complete Docker Compose setup that manages multi-node clusters (Global L0, DAG L1, and metagraph nodes) with automatic peer joining, health checks, and data persistence.
+
+## Docker Compose files
+
+The `docker/` directory contains layered Compose files:
+
+| File | Purpose |
+|------|---------|
+| `docker-compose.yaml` | Core services: `gl0` (Global L0) and `gl1` (DAG L1) |
+| `docker-compose.metagraph.yaml` | Metagraph services: `ml0` (Currency L0), `cl1`, `dl1` (Currency L1) |
+| `docker-compose.test.yaml` | Test network overlay — adds a shared bridge network for E2E tests |
+| `docker-compose.metagraph-test.yaml` | Test network overlay for metagraph services |
+| `docker-compose.volumes.yaml` | Named Docker volumes for `gl0-data` and `gl1-data` |
+| `docker-compose.local-bridge.yaml` | Local bridge network configuration |
+| `docker-compose.metagraph-genesis.yaml` | Genesis-mode configuration for metagraph bootstrap |
+
+## Docker Compose profiles
+
+Each service is gated behind a Compose profile, allowing selective startup:
+
+| Profile | Service | Ports (public / p2p / cli) |
+|---------|---------|-----------------------------|
+| `l0` | `gl0` — Global L0 | 9000 / 9001 / 9002 |
+| `l1` | `gl1` — DAG L1 | 9010 / 9011 / 9012 |
+| `ml0` | `ml0` — Currency L0 | 9020 / 9021 / 9022 |
+| `cl1` | `cl1` — Currency L1 | 9030 / 9031 / 9032 |
+| `dl1` | `dl1` — Data L1 | 9040 / 9041 / 9042 |
+
+## Quick start with `just`
+
+<Steps>
+  <Step title="Generate a keystore">
+    ```bash
+    java -jar keytool.jar generate \
+      --keystore ./key.p12 \
+      --alias alias \
+      --password yourpassword
+    ```
+  </Step>
+
+  <Step title="Start the environment">
+    ```bash
+    just up
+    ```
+
+    To start against a specific published release instead of building locally:
+
+    ```bash
+    just up --hypergraph-release=v3.5.11
+    ```
+  </Step>
+
+  <Step title="Verify nodes are healthy">
+    ```bash
+    curl http://localhost:9000/node/health   # Global L0
+    curl http://localhost:9010/node/health   # DAG L1
+    ```
+  </Step>
+
+  <Step title="Stop the environment">
+    ```bash
+    just down
+    ```
+  </Step>
+</Steps>
+
+## The test suite
+
+```bash
+just test                    # Full: assemble JARs + start Docker + run all E2E tests
+just test --skip-assembly    # Reuse existing JARs (faster iteration)
+just test --test=dag-cluster # Run a specific test scenario
+just test --list-tests       # Print all available test names
+```
+
+Available test scenarios:
+
+<CodeGroup>
+  ```bash DAG tests
+  just test --test=dag-cluster
+  just test --test=delegated-staking
+  just test --test=token-lock-replacement
+  just test --test=snapshot-streaming
+  ```
+
+  ```bash Metagraph tests
+  just test --use-test-metagraph --test=currency
+  just test --use-test-metagraph --test=rewards
+  just test --use-test-metagraph --test=token-locks
+  just test --use-test-metagraph --test=allow-spends
+  just test --use-test-metagraph --test=spend
+  ```
+</CodeGroup>
+
+## Core service configuration
+
+The Global L0 (`gl0`) and DAG L1 (`gl1`) services from `docker-compose.yaml`:
+
+```yaml
+services:
+  gl0:
+    image: constellationnetwork/tessellation:${TESSELLATION_DOCKER_VERSION:-latest}
+    container_name: gl0
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - CL_DOCKER_ID=gl0
+      - CL_KEYSTORE=/tessellation/key.p12
+      - CL_PUBLIC_HTTP_PORT=9000
+      - CL_P2P_HTTP_PORT=9001
+      - CL_CLI_HTTP_PORT=9002
+    ports:
+      - "9000:9000"   # Public HTTP
+      - "9001:9001"   # P2P HTTP
+      - "9002:9002"   # CLI
+    volumes:
+      - ./key.p12:/tessellation/key.p12:ro
+      - ./gl0-logs:/tessellation/logs
+      - ./gl0-data:/tessellation/data
+    healthcheck:
+      test: ["CMD", "/tessellation/internal-health-check.sh"]
+      interval: 3s
+      timeout: 5s
+      retries: 5
+      start_period: 3s
+    profiles: ["l0"]
+```
+
+## Environment variables
+
+Create a `.env` file in the project root (loaded by `env_file: .env`):
+
+```bash
+# Image version
+TESSELLATION_DOCKER_VERSION=latest
+
+# Keystore
+CL_KEYSTORE_MOUNT_PATH=./key.p12
+CL_PASSWORD=yourpassword
+
+# Global L0 peer (for L1 nodes to connect to)
+CL_DOCKER_GL0_PEER_HTTP_HOST=gl0
+CL_DOCKER_GL0_PEER_HTTP_PORT=9000
+CL_DOCKER_GL0_PEER_ID=<node-id-of-gl0>
+
+# Genesis mode (first boot only)
+CL_DOCKER_GL0_GENESIS=false
+```
+
+## Volume mounts and data persistence
+
+Each node container mounts three host paths:
+
+| Mount | Container path | Purpose |
+|-------|---------------|--------|
+| `./key.p12` | `/tessellation/key.p12` | PKCS12 keystore (read-only) |
+| `./gl0-logs` | `/tessellation/logs` | Log files |
+| `./gl0-data` | `/tessellation/data` | Snapshot data (persistent) |
+| `./seedlist` | `/tessellation/seedlist` | Peer seedlist (optional) |
+| `./genesis.csv` | `/tessellation/genesis.csv` | Genesis file (genesis mode only) |
+
+For named Docker volumes instead of host-path mounts, use `docker-compose.volumes.yaml`:
+
+```yaml
+volumes:
+  gl0-data:
+    name: gl0-data
+  gl1-data:
+    name: gl1-data
+```
+
+## Peer joining
+
+The `entrypoint.sh` script handles automatic peer joining on container start. Key join parameters:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CL_DOCKER_JOIN` | `true` | Whether to attempt joining |
+| `CL_DOCKER_JOIN_IP` | — | IP of the peer to join |
+| `CL_DOCKER_JOIN_PORT` | `9001` | P2P port of the peer |
+| `CL_DOCKER_JOIN_ID` | — | Node ID of the peer |
+| `CL_DOCKER_JOIN_INITIAL_DELAY` | `0` (L0) / `30` (L1) | Seconds to wait before first join attempt |
+| `CL_DOCKER_JOIN_RETRIES` | `10` | Number of join retries |
+| `CL_DOCKER_JOIN_DELAY` | `10` | Seconds between retries |
+
+Joining is performed by POSTing to `http://localhost:<cli-port>/cluster/join`.
+
+## Multi-node setup
+
+To run a complete metagraph stack (L0 + Currency L0 + Currency L1):
+
+```bash
+docker compose \
+  -f docker/docker-compose.yaml \
+  -f docker/docker-compose.metagraph.yaml \
+  --profile l0 --profile l1 --profile ml0 --profile cl1 \
+  up -d
+```
+
+Or use the `just` commands which manage profile selection automatically based on test requirements.

@@ -1,0 +1,286 @@
+---
+title: "Delegated Stakes"
+description: "Create, update, withdraw, and query delegated stake positions on the Global L0 node."
+---
+
+Delegated staking allows DAG holders to delegate their token locks to validator nodes in exchange for staking rewards. The delegated stake system is built on top of token locks — you must first create a `TokenLock` (via the DAG L1 API) before creating a delegated stake.
+
+<Note>
+  All endpoints return the following response headers:
+  - **X-Id** — The node's public key identifier
+  - **X-Session-Token** — The current cluster session token
+  - **Request-Signature** — Cryptographic signature of the response for verification
+</Note>
+
+<Info>
+  **Prerequisites:** Before creating a delegated stake, you must:
+  1. Create a `TokenLock` via the DAG L1 `/token-locks` endpoint with `unlockEpoch: null` (indefinite lock)
+  2. Note the returned hash — this becomes the `tokenLockRef` in your delegated stake request
+</Info>
+
+---
+
+## POST /delegated-stakes
+
+Creates a new delegated stake or updates an existing one.
+
+- **Create:** Provide a `tokenLockRef` pointing to a `TokenLock` with a `null` `unlockEpoch` value.
+- **Update (re-delegate):** Provide the same `tokenLockRef` as the original stake with a new `nodeId`. The lock and all accrued rewards are transferred to the new node without waiting for the unlock period.
+
+```bash
+curl -X POST https://<node-host>:9000/delegated-stakes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "value": {
+      "source": "DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack",
+      "nodeId": "c7f9a08bdea7ff5f51c8af16e223a1d751bac9c541125d9aef5658e9b7597aee",
+      "amount": 2567890,
+      "fee": 256,
+      "tokenLockRef": "abc123...",
+      "parent": { "ordinal": 0, "hash": "" }
+    },
+    "proofs": [
+      { "id": "<public-key-hex>", "signature": "<ecdsa-der-hex>" }
+    ]
+  }'
+```
+
+**Request body** — `SignedCreateDelegatedStake`
+
+<ParamField body="value" type="object" required>
+  The delegated stake creation payload
+  <Expandable title="CreateDelegatedStake">
+    <ParamField body="source" type="string" required>
+      DAG wallet address of the delegator
+    </ParamField>
+    <ParamField body="nodeId" type="string" required>
+      Public key ID of the validator node to delegate to
+    </ParamField>
+    <ParamField body="amount" type="integer" required>
+      Delegated stake amount in datums (must be ≥ 0)
+    </ParamField>
+    <ParamField body="fee" type="integer">
+      Optional transaction fee in datums (must be ≥ 0)
+    </ParamField>
+    <ParamField body="tokenLockRef" type="string" required>
+      Hash of the `TokenLock` transaction backing this stake
+    </ParamField>
+    <ParamField body="parent" type="object" required>
+      Reference to the previous delegated stake transaction for this address
+      <Expandable title="DelegatedStakeReference">
+        <ParamField body="ordinal" type="integer" required>
+          Ordinal of the previous transaction (0 for first)
+        </ParamField>
+        <ParamField body="hash" type="string" required>
+          Hash of the previous transaction (empty string for first)
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+<ParamField body="proofs" type="array" required>
+  Array of cryptographic signature proofs from the source address owner
+  <Expandable title="SignatureProof">
+    <ParamField body="id" type="string" required>
+      Public key hex of the signer
+    </ParamField>
+    <ParamField body="signature" type="string" required>
+      ECDSA signature in DER format (hex-encoded)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+**Response `200 OK`**
+
+<ResponseField name="hash" type="string">
+  Hash of the accepted delegated stake create transaction
+</ResponseField>
+
+**Response `400 Bad Request`**
+
+<ResponseField name="errors" type="array">
+  Array of error cause objects
+  <Expandable title="ErrorCause">
+    <ResponseField name="message" type="string">
+      Human-readable rejection reason
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+**Response `503 Service Unavailable`**
+
+Node is not in `Ready` state.
+
+---
+
+## PUT /delegated-stakes
+
+Withdraws an existing delegated stake. After withdrawal, the locked tokens and all available rewards are released after the unlock period has elapsed.
+
+```bash
+curl -X PUT https://<node-host>:9000/delegated-stakes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "value": {
+      "source": "DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack",
+      "tokenLockRef": "abc123...",
+      "parent": { "ordinal": 1, "hash": "abc123..." }
+    },
+    "proofs": [
+      { "id": "<public-key-hex>", "signature": "<ecdsa-der-hex>" }
+    ]
+  }'
+```
+
+**Request body** — `SignedWithdrawDelegatedStake`
+
+Same envelope structure as `POST /delegated-stakes` but with a `WithdrawDelegatedStake` value payload containing `source`, `tokenLockRef`, and `parent`.
+
+**Response `200 OK`**
+
+<ResponseField name="hash" type="string">
+  Hash of the accepted delegated stake withdrawal transaction
+</ResponseField>
+
+**Response `400 Bad Request`**
+
+Invalid withdrawal request. Returns an `ErrorResponse` with rejection reasons.
+
+**Response `503 Service Unavailable`**
+
+Node is not in `Ready` state.
+
+---
+
+## GET /delegated-stakes/{address}/info
+
+Returns all delegated stake positions (active and pending withdrawal) for a given address.
+
+```bash
+curl https://<node-host>:9000/delegated-stakes/DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack/info
+```
+
+<ParamField path="address" type="string" required>
+  DAG wallet address to query
+</ParamField>
+
+**Response `200 OK`**
+
+<ResponseField name="address" type="string">
+  The queried wallet address
+</ResponseField>
+<ResponseField name="activeDelegatedStakes" type="array">
+  Currently active delegated stake positions
+  <Expandable title="DelegatedStakeInfo">
+    <ResponseField name="nodeId" type="string">
+      Validator node this stake is delegated to
+    </ResponseField>
+    <ResponseField name="acceptedOrdinal" type="integer">
+      Snapshot ordinal when the stake was accepted
+    </ResponseField>
+    <ResponseField name="tokenLockRef" type="string">
+      Hash of the backing token lock transaction
+    </ResponseField>
+    <ResponseField name="amount" type="integer">
+      Staked amount in datums
+    </ResponseField>
+    <ResponseField name="fee" type="integer">
+      Fee paid in datums
+    </ResponseField>
+    <ResponseField name="hash" type="string">
+      Hash of the delegated stake transaction
+    </ResponseField>
+    <ResponseField name="rewardAmount" type="integer">
+      Accrued reward amount in datums
+    </ResponseField>
+    <ResponseField name="totalBalance" type="integer">
+      Total balance (amount + rewards) in datums
+    </ResponseField>
+    <ResponseField name="withdrawalStartEpoch" type="integer">
+      Epoch when withdrawal was initiated (null if active)
+    </ResponseField>
+    <ResponseField name="withdrawalEndEpoch" type="integer">
+      Epoch when withdrawal completes (null if active)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+<ResponseField name="pendingWithdrawals" type="array">
+  Stakes in the withdrawal pending state (same schema as `activeDelegatedStakes`)
+</ResponseField>
+
+---
+
+## GET /delegated-stakes/last-reference/{address}
+
+Returns the last delegated stake transaction reference for a given address. Use this to build the `parent` field for new delegated stake requests.
+
+```bash
+curl https://<node-host>:9000/delegated-stakes/last-reference/DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack
+```
+
+<ParamField path="address" type="string" required>
+  DAG wallet address
+</ParamField>
+
+**Response `200 OK`**
+
+<ResponseField name="ordinal" type="integer">
+  Ordinal of the last delegated stake transaction (0 if none)
+</ResponseField>
+<ResponseField name="hash" type="string">
+  Hash of the last delegated stake transaction (empty string if none)
+</ResponseField>
+
+**Example response:**
+
+```json
+{
+  "ordinal": 3,
+  "hash": "a1b2c3d4e5f6..."
+}
+```
+
+**Response `503 Service Unavailable`**
+
+Node is not in `Ready` state.
+
+---
+
+## GET /delegated-stakes/rewards-info
+
+Returns global rewards configuration and statistics. Use this data to calculate estimated APY for delegated staking positions.
+
+```bash
+curl https://<node-host>:9000/delegated-stakes/rewards-info
+```
+
+**Response `200 OK`**
+
+<ResponseField name="epochsPerYear" type="integer">
+  Number of epochs per year, based on current global snapshot epoch configuration
+</ResponseField>
+<ResponseField name="currentDagPrice" type="integer">
+  Current DAG price expressed in datum/USD format
+</ResponseField>
+<ResponseField name="nextDagPrice" type="object">
+  Information about the next DAG price and the epoch at which it takes effect
+</ResponseField>
+<ResponseField name="totalDelegatedAmount" type="integer">
+  Total amount delegated across all active stakes (including accrued rewards), in datums
+</ResponseField>
+<ResponseField name="latestAverageRewardPerDag" type="integer">
+  Average reward rate per DAG per epoch, in datums
+</ResponseField>
+<ResponseField name="totalDagAmount" type="integer">
+  Current total supply of all DAG balances, in datums
+</ResponseField>
+<ResponseField name="totalRewardsPerLatestEpoch" type="integer">
+  Total incremental rewards added in the latest epoch, in datums
+</ResponseField>
+<ResponseField name="totalRewardsPerYearEstimate" type="integer">
+  Estimated total annual reward per DAG in datums (`latestAverageRewardPerDag × epochsPerYear`)
+</ResponseField>
+
+**Response `503 Service Unavailable`**
+
+Node is not in `Ready` state.

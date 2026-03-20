@@ -1,0 +1,112 @@
+---
+title: "Introduction"
+description: "Tessellation is the Constellation Network Node Software — a DAG-based distributed ledger with hierarchical Layer 0 global consensus and Layer 1 metagraph validators."
+---
+
+Tessellation implements a hierarchical DAG (Directed Acyclic Graph) consensus protocol where **Layer 1 metagraphs** create blocks that **Layer 0** aggregates into global snapshots. This architecture enables scalable, parallel transaction processing across multiple metagraphs while maintaining a unified global state.
+
+Written in **Scala 2.13** with **Cats Effect 3** for purely functional, resource-safe concurrency.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get a local environment running with Docker in a few commands.
+  </Card>
+  <Card title="Architecture overview" icon="sitemap" href="/architecture-overview">
+    Understand the hierarchical DAG consensus model and module layout.
+  </Card>
+</CardGroup>
+
+## What is Tessellation?
+
+Tessellation is the node software powering the Constellation Network — a public DAG-based blockchain that supports parallel metagraph execution. Each metagraph runs its own L1 consensus, producing blocks that flow upward through Currency L0 and into the Global L0 for final global state commitment.
+
+```
+L1 Metagraph Nodes  →  Currency L0  →  Global L0  →  Global Snapshots
+      (blocks)           (snapshots)    (consensus)     (final state)
+```
+
+The result is a network that can process transactions across many independent metagraphs simultaneously, with each metagraph able to carry custom data, reward schemes, and validation logic.
+
+## Hierarchical architecture
+
+The network is organized into three layers:
+
+| Layer | Module | Role |
+|-------|--------|------|
+| Layer 1 — Metagraph | `dag-l1`, `currency-l1` | Block creation and per-metagraph consensus |
+| Currency Layer 0 | `currency-l0` | Aggregates L1 blocks into currency snapshots |
+| Global Layer 0 | `dag-l0` | Aggregates all currency snapshots into global snapshots |
+
+**Consensus flow**: L1 creates blocks → Currency-L0 creates snapshots → Global-L0 creates global snapshots with all metagraph state.
+
+## Key modules
+
+<CardGroup cols={2}>
+  <Card title="shared" icon="database">
+    Core data structures (`Transaction`, `Block`, `GlobalSnapshot`, `GlobalIncrementalSnapshot`), cryptography, Kryo and JSON serialization, and Merkle Patricia Trie state proofs.
+  </Card>
+  <Card title="node-shared" icon="network-wired">
+    P2P networking, multi-phase consensus FSM, anti-entropy gossip protocol, cluster management, and peer authentication middleware.
+  </Card>
+  <Card title="dag-l0" icon="globe">
+    Global Layer 0 validator. Aggregates all metagraph state channels, distributes rewards (classic and delegated), and manages trust scoring via EigenTrust, DATT, and Self-Avoiding Walk.
+  </Card>
+  <Card title="dag-l1" icon="layer-group">
+    Layer 1 validator for metagraph block creation. Runs a block consensus round every 5 seconds when transactions are available and forwards accepted blocks to L0.
+  </Card>
+  <Card title="currency-l0 / currency-l1" icon="coins">
+    Currency-specific metagraph logic extending `dag-l0` and `dag-l1` with extension points for custom rewards, transaction validators, and data application hooks.
+  </Card>
+  <Card title="sdk" icon="puzzle-piece">
+    Stable API facade for external metagraph developers. Add as a `provided`-scope dependency to access all Tessellation functionality without bundling internals.
+  </Card>
+  <Card title="kernel" icon="code">
+    Category theory abstractions using Droste recursion schemes. Provides the `Cell` hylomorphism container used by `dag-l0`'s event processing pipeline.
+  </Card>
+  <Card title="keytool / wallet" icon="key">
+    CLI tools for key management (PKCS12 keystores), wallet operations, transaction signing, delegated staking, and token locks.
+  </Card>
+</CardGroup>
+
+## Tech stack
+
+| Library | Version | Purpose |
+|---------|---------|--------|
+| **Scala** | 2.13.18 | Primary language |
+| **Java** | 21 | Runtime — enforced at build time |
+| **Cats Effect** | 3 | Async IO and resource lifecycle |
+| **FS2** | — | Streaming with backpressure |
+| **HTTP4s** (Ember) | — | HTTP server and client |
+| **Circe** | — | JSON serialization with Brotli compression |
+| **BouncyCastle** | — | ECDSA cryptography |
+| **Weaver** | — | Testing framework (Cats Effect–based) |
+| **Refined types** | — | Compile-time validation (`PosLong`, `NonNegLong`) |
+
+<Note>
+  Java 21 is enforced at build time via an `initialize` assertion in `build.sbt`. Running SBT with any other Java version will immediately fail with a descriptive error.
+</Note>
+
+## Key design patterns
+
+Tessellation uses a consistent set of functional programming patterns across all modules:
+
+- **Tagless final** — effect type `F[_]` throughout, with `IO` at the application boundary
+- **Resource-based lifecycle** — `Resource[IO, A]` for all services and storages
+- **Refined types** — `PosLong`, `NonNegLong`, and other refined wrappers for compile-time guarantees
+- **Newtype wrappers** — zero-cost type safety for domain concepts
+- **Monocle optics** — immutable data transformation via lenses
+- **Droste recursion schemes** — hylomorphisms in the L0 event processing pipeline
+- **Kleisli composition** — handler chains in the gossip and HTTP layers
+
+## Naming conventions
+
+All modules follow consistent naming so you can navigate the codebase predictably:
+
+| Suffix | Role |
+|--------|------|
+| `*Storage` | Data access layer |
+| `*Service` | Business logic |
+| `*Client` | HTTP client |
+| `*Routes` | HTTP endpoints |
+| `*Daemon` | Background processes |
+| `*Program` | High-level orchestration |

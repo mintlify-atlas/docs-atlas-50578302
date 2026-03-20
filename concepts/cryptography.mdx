@@ -1,0 +1,217 @@
+---
+title: "Cryptography"
+description: "ECDSA keys, DAG address derivation, multi-signature types, SHA-256 hashing, and Merkle Patricia Trie state proofs in Tessellation."
+---
+
+Tessellation's cryptographic stack is built on **BouncyCastle** for ECDSA operations and uses SHA-256 hashing throughout. All cryptographic types are first-class values in the schema, enabling compile-time safety through refined types and newtype wrappers.
+
+## Key format
+
+Nodes and wallets use **ECDSA** key pairs managed by BouncyCastle's `BouncyCastleProvider`:
+
+```scala
+object SecurityProvider {
+  def forAsync[F[_]: Async]: Resource[F, SecurityProvider[F]] =
+    Resource.make(Async[F].delay(new BouncyCastleProvider()))(_ => Applicative[F].unit)
+      .map(bcProvider => new SecurityProvider[F] {
+        val provider: BouncyCastleProvider = bcProvider
+      })
+}
+```
+
+Key pairs are stored in **PKCS12 keystores** (`.p12` files). The `keytool` module provides CLI commands for key lifecycle management:
+
+```bash
+# Generate a new key pair and store in a .p12 keystore
+cl-keytool generate --keystore my-node.p12 --alias alias --password secret
+
+# Migrate a legacy keystore format
+cl-keytool migrate --keystore old.p12 --alias alias --password secret
+
+# Export the private key as hex
+cl-keytool export --keystore my-node.p12 --alias alias --password secret
+```
+
+## DAG address format
+
+A `DAGAddress` is a 40-character Base58-encoded string with the prefix `DAG` and an embedded checksum digit:
+
+```scala
+object Address {
+  def fromBytes(bytes: Array[Byte]): Address = {
+    val sha256Digest = Hash.sha256DigestFromBytes(bytes)
+    val encoded      = Base58.encode(sha256Digest.toIndexedSeq)
+    val end          = encoded.slice(encoded.length - 36, encoded.length)
+    val validInt     = end.filter(Character.isDigit)
+    val par          = validInt.map(_.toString.toInt).sum % 9
+    Address(refineV[DAGAddressRefined].unsafeFrom(s"DAG$par$end"))
+  }
+}
+```
+
+**Derivation steps:**
+1. Take the SHA-256 digest of the public key bytes.
+2. Base58-encode the digest.
+3. Take the last 36 characters as the address body.
+4. Sum all digit characters in the body, compute `sum % 9` to get the parity digit `par`.
+5. Concatenate `"DAG" + par + body` to form the 40-character address.
+
+**Validation** (enforced by the `DAGAddressRefined` predicate):
+- Length must be exactly 40 characters.
+- Body must be valid Base58.
+- The parity digit at position 3 must match `digitSum % 9`.
+
+<Note>
+  The Stardust Collective address is exempt from the standard validation rule and is always considered valid.
+</Note>
+
+## Signing: the `Signed[A]` type
+
+Every artifact that requires authentication is wrapped in `Signed[A]`, which carries both the value and a non-empty set of `SignatureProof` values:
+
+```scala
+case class Signed[+A](value: A, proofs: NonEmptySet[SignatureProof])
+
+case class SignatureProof(id: Id, signature: Signature)
+
+@newtype
+case class Signature(value: Hex)
+```
+
+This design supports **multi-signature** natively — a single artifact can be co-signed by multiple parties simply by adding more `SignatureProof` entries to the `proofs` set.
+
+### Creating a signature
+
+```scala
+// Sign any Circe-encodable value with a KeyPair
+Signed.forAsyncHasher[F, MyType](data, keyPair): F[Signed[MyType]]
+
+// Add a second signature to an existing Signed value
+signed.signAlsoWith[F](anotherKeyPair): F[Signed[MyType]]
+```
+
+### Verifying signatures
+
+```scala
+// Check all proofs are valid
+signed.hasValidSignature[F]: F[Boolean]
+
+// Check that specific signers are present
+signed.isSignedBy(signers: Set[Id]): Boolean
+
+// Check that only specific signers are present (no others)
+signed.isSignedExclusivelyBy(signers: Set[Id]): Boolean
+```
+
+## Hash: SHA-256 with identity-hash caching
+
+All hashing goes through the `Hash` newtype, which wraps a hex-encoded SHA-256 digest:
+
+```scala
+@newtype
+case class Hash(value: String)
+
+object Hash {
+  def fromBytes(bytes: Array[Byte]): Hash =
+    Hash(sha256DigestFromBytes(bytes).toHexString)
+
+  def sha256DigestFromBytes(bytes: Array[Byte]): Sha256Digest = {
+    val md = MessageDigest.getInstance("SHA-256")
+    md.update(bytes)
+    Sha256Digest(md.digest())
+  }
+}
+```
+
+<Warning>
+  The hash cache uses `System.identityHashCode()` — **object identity**, not structural equality. Two structurally equal objects with different JVM identities will each compute their hash independently. This is a deliberate trade-off for performance.
+</Warning>
+
+The `Hasher[F]` typeclass abstracts hashing over a serialisation strategy. Tessellation maintains two hasher variants:
+- **Kryo hasher** — binary serialisation via `KryoSerializer` (requires `setReferences=true` for backward compatibility with transaction types).
+- **JSON hasher** — JSON serialisation via `JsonSerializer` with Brotli compression.
+
+`HasherSelector[F]` chooses the appropriate hasher based on the current node context.
+
+## HTTP request signing
+
+P2P HTTP requests between nodes are authenticated using the `httpSignerCore` and `httpSignerHttp4s` libraries. These libraries intercept the HTTP4s request pipeline and attach signature headers before the request is sent:
+
+1. The outgoing request body/headers are serialised into a canonical byte representation.
+2. The node's private key signs the canonical bytes with ECDSA.
+3. The resulting `Signature` and node `Id` are added to the request headers.
+4. `PeerAuthMiddleware` on the receiving side verifies the signature against the sender's public key.
+
+## Merkle Patricia Trie: state proofs
+
+The `security/mpt/` package implements a **Merkle Patricia Trie** (MPT) for computing compact state commitments. The MPT is used to produce the `GlobalSnapshotStateProof` fields included in every `GlobalIncrementalSnapshot`.
+
+```
+security/mpt/
+├── MerklePatriciaTrie.scala     # Core trie structure
+├── MerklePatriciaNode.scala     # Branch, Extension, Leaf nodes
+├── MerklePatriciaCommitment.scala
+├── CompactNibblePath.scala      # Hex-prefix path encoding
+├── Nibble.scala
+├── producer/                   # Trie construction from sorted maps
+├── prover/                     # Inclusion proof generation
+├── verifier/                   # Proof verification
+└── storages/                   # Backing store abstractions
+```
+
+<Info>
+  MPT roots are computed **per snapshot**, not per transaction. This means a full snapshot's worth of state changes are committed in a single root hash, keeping proof overhead low even for high-throughput periods.
+</Info>
+
+### State fields committed by MPT
+
+The `GlobalSnapshotStateProof` commits to:
+
+| Field | Committed State |
+|---|---|
+| `lastTxRefsProof` | Last accepted transaction reference per address |
+| `balancesProof` | DAG balance of every address |
+| `lastStateChannelSnapshotHashesProof` | Latest snapshot hash per metagraph address |
+| `lastCurrencySnapshotsProof` | Merkle root over all currency snapshot ordinals |
+| `activeDelegatedStakes` | Active delegated stake records |
+| `activeNodeCollaterals` | Active node collateral records |
+
+## Key generation with keytool
+
+```bash
+# Full key generation workflow
+cl-keytool generate \
+  --keystore /path/to/node.p12 \
+  --alias node-key \
+  --password "$(cat /run/secrets/keystore_password)"
+
+# Show derived DAG address from a keystore
+cl-wallet show-address \
+  --keystore /path/to/node.p12 \
+  --alias node-key \
+  --password secret
+
+# Show the hex-encoded public key
+cl-wallet show-public-key \
+  --keystore /path/to/node.p12 \
+  --alias node-key \
+  --password secret
+```
+
+<Warning>
+  Java 21 is required at build and runtime. Kryo serialisation uses Java reflection features specific to Java 21 — earlier versions will cause runtime failures.
+</Warning>
+
+### SDK usage
+
+Metagraph developers can access cryptographic operations through the SDK without importing internal modules:
+
+```scala
+import io.constellationnetwork.sdk._
+
+// Generate a key pair
+keypair.generate[F]: F[KeyPair]
+
+// Access the SecurityProvider for signing
+SecurityProvider[F].provider: BouncyCastleProvider
+```

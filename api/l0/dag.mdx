@@ -1,0 +1,101 @@
+---
+title: "DAG"
+description: "Query $DAG token supply and address balances from the Global L0 node."
+---
+
+The DAG endpoints expose $DAG token economics data as recorded in the latest global snapshot. All amounts are denominated in **datums** — the smallest unit of DAG (1 DAG = 100,000,000 datums).
+
+<Note>
+  All endpoints return the following response headers:
+  - **X-Id** — The node's public key identifier
+  - **X-Session-Token** — The current cluster session token
+  - **Request-Signature** — Cryptographic signature of the response for verification
+</Note>
+
+---
+
+## GET /dag/total-supply
+
+Returns the total supply of $DAG as of the latest global snapshot. Total supply includes all DAG in existence, including locked and staked tokens.
+
+```bash
+curl https://<node-host>:9000/dag/total-supply
+```
+
+**Response `200 OK`**
+
+<ResponseField name="total" type="integer">
+  Total $DAG supply in datums (1 DAG = 100,000,000 datums)
+</ResponseField>
+<ResponseField name="ordinal" type="integer">
+  The snapshot ordinal at which this supply was calculated
+</ResponseField>
+
+**Example response:**
+
+```json
+{
+  "total": 350000000000000000,
+  "ordinal": 1483920
+}
+```
+
+---
+
+## GET /dag/circulated-supply
+
+Returns the circulated supply of $DAG as of the latest global snapshot. Circulated supply excludes tokens held in treasury or reserve addresses.
+
+```bash
+curl https://<node-host>:9000/dag/circulated-supply
+```
+
+**Response `200 OK`**
+
+<ResponseField name="circulated" type="integer">
+  Circulated $DAG supply in datums
+</ResponseField>
+<ResponseField name="ordinal" type="integer">
+  The snapshot ordinal at which this supply was calculated
+</ResponseField>
+
+**Example response:**
+
+```json
+{
+  "circulated": 290000000000000000,
+  "ordinal": 1483920
+}
+```
+
+---
+
+## GET /dag/{address}/balance
+
+Returns the $DAG balance for a given wallet address, as recorded in the latest global snapshot.
+
+```bash
+curl https://<node-host>:9000/dag/DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack/balance
+```
+
+<ParamField path="address" type="string" required>
+  DAG wallet address (begins with `DAG`)
+</ParamField>
+
+**Response `200 OK`**
+
+<ResponseField name="balance" type="integer">
+  $DAG balance in datums
+</ResponseField>
+<ResponseField name="ordinal" type="integer">
+  The snapshot ordinal at which this balance was recorded
+</ResponseField>
+
+**Example response:**
+
+```json
+{
+  "balance": 5000000000,
+  "ordinal": 1483920
+}
+```

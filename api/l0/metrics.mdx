@@ -1,0 +1,52 @@
+---
+title: "Metrics"
+description: "Retrieve Prometheus-compatible metrics from the Global L0 node via Micrometer."
+---
+
+The metrics endpoint exposes internal node telemetry in Prometheus text format using Micrometer. These metrics can be scraped by a Prometheus server or compatible monitoring system.
+
+<Note>
+  All endpoints return the following response headers:
+  - **X-Id** — The node's public key identifier
+  - **X-Session-Token** — The current cluster session token
+  - **Request-Signature** — Cryptographic signature of the response for verification
+</Note>
+
+---
+
+## GET /metrics
+
+Returns Micrometer-instrumented Prometheus metrics for the node. The response is in Prometheus exposition text format.
+
+```bash
+curl https://<node-host>:9000/metrics
+```
+
+**Response `200 OK`**
+
+Returns a `text/html` body containing Prometheus-format metrics. Metrics include JVM stats, HTTP request counts, consensus round timings, peer counts, and more.
+
+**Example response:**
+
+```
+# HELP jvm_memory_used_bytes The amount of used memory
+# TYPE jvm_memory_used_bytes gauge
+jvm_memory_used_bytes{area="heap",id="G1 Eden Space",} 1.34217728E8
+jvm_memory_used_bytes{area="heap",id="G1 Old Gen",} 2.34881024E8
+# HELP http_server_requests_seconds Duration of HTTP server request handling
+# TYPE http_server_requests_seconds summary
+http_server_requests_seconds_count{method="GET",status="200",uri="/cluster/info",} 42.0
+http_server_requests_seconds_sum{method="GET",status="200",uri="/cluster/info",} 0.312
+```
+
+<Tip>
+  To integrate with Prometheus, add a scrape job to your `prometheus.yml`:
+
+  ```yaml
+  scrape_configs:
+    - job_name: tessellation-l0
+      static_configs:
+        - targets: ['<node-host>:9000']
+      metrics_path: /metrics
+  ```
+</Tip>

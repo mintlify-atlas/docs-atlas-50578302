@@ -1,0 +1,184 @@
+---
+title: "Contributing"
+description: "Fork and branch workflow, commit conventions, code style, and pull request process for contributing to Tessellation."
+---
+
+## Fork and branch workflow
+
+<Steps>
+  <Step title="Fork the repository">
+    Create your fork on GitHub:
+
+    ```
+    https://github.com/Constellation-Labs/tessellation/fork
+    ```
+  </Step>
+
+  <Step title="Clone and add the upstream remote">
+    ```bash
+    git clone https://github.com/<your-github-account>/tessellation
+    cd tessellation
+    git remote add upstream https://github.com/Constellation-Labs/tessellation
+    ```
+  </Step>
+
+  <Step title="Create a feature branch">
+    Create a branch for your work. Use a descriptive name, optionally prefixed with a GitHub issue number:
+
+    ```bash
+    git checkout -b 747-update-contrib
+    ```
+  </Step>
+
+  <Step title="Keep your branch in sync">
+    Rebase against `upstream/develop` regularly to avoid merge conflicts:
+
+    ```bash
+    git fetch upstream
+    git rebase upstream/develop
+    ```
+  </Step>
+
+  <Step title="Run the linter before committing">
+    Format your code with scalafmt and apply scalafix rules before every commit:
+
+    ```bash
+    sbt runLinter
+    ```
+
+    This auto-formats code and organizes imports. The CI pipeline enforces the same checks and will fail if formatting is not applied.
+  </Step>
+
+  <Step title="Push and open a pull request">
+    Rebase with upstream one final time, then push your branch:
+
+    ```bash
+    git push -u origin 747-update-contrib
+    ```
+
+    Open a pull request from your fork via the GitHub UI.
+  </Step>
+</Steps>
+
+## Commit message format
+
+Conventional Commits are **required** and enforced by [commitlint](https://commitlint.js.org/) using the `conventional-changelog-conventionalcommits` preset.
+
+**Format:**
+
+```
+type: description
+```
+
+**Rules enforced by commitlint:**
+- `type` must be lowercase
+- `type` must be one of the allowed values (see below)
+- `description` must not be empty and must not end with a period
+- `description` must not use sentence-case, start-case, pascal-case, or upper-case
+- Header line maximum length: 100 characters
+- Body lines maximum length: 100 characters
+
+**Allowed types:**
+
+| Type | When to use |
+|---|---|
+| `feat` | A new feature |
+| `fix` | A bug fix |
+| `refactor` | Code change that is neither a feature nor a fix |
+| `test` | Adding or updating tests |
+| `docs` | Documentation only changes |
+| `chore` | Maintenance tasks |
+| `build` | Changes to build system or dependencies |
+| `ci` | CI configuration changes |
+| `perf` | Performance improvements |
+| `style` | Formatting changes (no logic change) |
+| `revert` | Revert a previous commit |
+
+**Examples:**
+
+```
+feat: add new validation endpoint
+fix: resolve race condition in consensus
+refactor: simplify block processing logic
+test: add property-based tests for transaction validator
+docs: update contributing guide
+```
+
+## Code style
+
+Code formatting is handled automatically by `sbt runLinter`, which runs both scalafmt and scalafix.
+
+<Accordion title="scalafmt settings (.scalafmt.conf)">
+
+```
+version=3.5.8
+runner.dialect = scala213
+
+preset = default
+align.preset = some
+maxColumn = 140
+indent.defnSite = 2
+indent.callSite = 2
+
+rewrite.rules = [
+  AvoidInfix
+  RedundantBraces
+  RedundantParens
+  AsciiSortImports
+  PreferCurlyFors
+]
+```
+
+</Accordion>
+
+<Accordion title="scalafix rules (.scalafix.conf)">
+
+```
+rules = [
+    OrganizeImports,
+    NoSetSum,
+    NoSetMap,
+    NoMapConcat
+]
+```
+
+Imports are organized into groups: `javax?`, `cats`, `scala`, `io.constellationnetwork`, then everything else.
+
+</Accordion>
+
+<Warning>
+  Always run `sbt runLinter` before pushing. The `check-scala-code.yml` CI workflow runs `scalafixAll --check` and `scalafmtCheckAll` and will fail the build if formatting or import ordering does not match.
+</Warning>
+
+## How to add new features
+
+The following guides map common extension tasks to the relevant files and modules. For full file-level details, see the [Codebase Map](https://github.com/Constellation-Labs/tessellation/blob/main/docs/CODEBASE_MAP.md).
+
+<AccordionGroup>
+
+  <Accordion title="Add a new transaction type">
+    1. Define the type in `modules/shared/src/main/scala/io/constellationnetwork/schema/`
+    2. Add Kryo and JSON serialization in `shared/kryo/` and `shared/json/`
+    3. Update validators in `modules/node-shared/domain/transaction/`
+    4. Add processing logic in `dag-l0/infrastructure/snapshot/`
+  </Accordion>
+
+  <Accordion title="Add a new HTTP endpoint">
+    1. Define the route in `modules/{module}/http/routes/`
+    2. Wire it into `modules/{module}/modules/HttpApi.scala`
+    3. If it is a P2P endpoint, add a client in `http/p2p/clients/`
+  </Accordion>
+
+  <Accordion title="Modify consensus">
+    1. FSM state definitions live in `node-shared/infrastructure/consensus/state/`
+    2. Phase logic is in `node-shared/infrastructure/consensus/engine/`
+    3. Declarations are in `node-shared/infrastructure/consensus/declaration.scala`
+  </Accordion>
+
+  <Accordion title="Add a new metagraph feature">
+    1. Extend `CurrencyL0App` or `CurrencyL1App`
+    2. Override the relevant extension points: `dataApplication`, `rewards`, `transactionValidator`, or `customArtifacts`
+    3. Use the `sdk` module as a dependency with `provided` scope for stable API access
+  </Accordion>
+
+</AccordionGroup>

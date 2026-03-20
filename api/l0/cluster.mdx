@@ -1,0 +1,90 @@
+---
+title: "Cluster"
+description: "Retrieve peer and session information for the Global L0 cluster."
+---
+
+<Note>
+  All endpoints return the following response headers:
+  - **X-Id** — The node's public key identifier
+  - **X-Session-Token** — The current cluster session token
+  - **Request-Signature** — Cryptographic signature of the response for verification
+</Note>
+
+## GET /cluster/info
+
+Returns the list of all peers currently known to this node in the cluster, along with their state and connection details.
+
+```bash
+curl https://<node-host>:9000/cluster/info
+```
+
+**Response `200 OK`**
+
+Returns an array of `Peer` objects.
+
+<ResponseField name="[]" type="array">
+  Array of peer objects
+  <Expandable title="Peer">
+    <ResponseField name="id" type="string">
+      The peer's public key identifier (hex-encoded)
+    </ResponseField>
+    <ResponseField name="ip" type="string">
+      The peer's IP address or hostname
+    </ResponseField>
+    <ResponseField name="publicPort" type="integer">
+      Public-facing HTTP port (default: 9000)
+    </ResponseField>
+    <ResponseField name="p2pPort" type="integer">
+      Peer-to-peer communication port (default: 9001)
+    </ResponseField>
+    <ResponseField name="session" type="string">
+      The peer's current session token
+    </ResponseField>
+    <ResponseField name="state" type="string">
+      Current node state. One of: `Ready`, `Initial`, `ReadyToJoin`, `LoadingGenesis`, `GenesisReady`, `StartingSession`, `SessionStarted`, `WaitingForDownload`, `DownloadInProgress`, `Leaving`, `Offline`
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+**Example response:**
+
+```json
+[
+  {
+    "id": "c7f9a08bdea7ff5f51c8af16e223a1d751bac9c541125d9aef5658e9b7597aee",
+    "ip": "13.56.42.10",
+    "publicPort": 9000,
+    "p2pPort": 9001,
+    "session": "20180203073000",
+    "state": "Ready"
+  }
+]
+```
+
+---
+
+## GET /cluster/session
+
+Returns the current cluster session token. The session token changes when the cluster re-forms. Returns `404` if no active session exists.
+
+```bash
+curl https://<node-host>:9000/cluster/session
+```
+
+**Response `200 OK`**
+
+<ResponseField name="token" type="string">
+  The current cluster session token (formatted as a timestamp integer, e.g. `20180203073000`)
+</ResponseField>
+
+**Response `404 Not Found`**
+
+No active cluster session exists. The node may still be initializing.
+
+**Example response:**
+
+```json
+{
+  "token": "20180203073000"
+}
+```

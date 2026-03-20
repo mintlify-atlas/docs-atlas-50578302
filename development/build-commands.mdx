@@ -1,0 +1,155 @@
+---
+title: "Build commands"
+description: "SBT and just commands for compiling, testing, assembling JARs, and running the full CI pipeline locally."
+---
+
+Tessellation uses two complementary build tools:
+
+- **SBT** — the Scala build tool, used for compilation, tests, linting, and JAR assembly.
+- **just** — a command runner that orchestrates Docker-based end-to-end tests and environment management.
+
+## SBT commands
+
+<CodeGroup>
+
+```bash Compile
+# Compile all modules
+sbt compile
+```
+
+```bash Test
+# Run all tests
+sbt test
+
+# Run tests for a specific module
+sbt "dagL0/test"
+sbt "nodeShared/test"
+```
+
+```bash Lint
+# Auto-format with scalafmt and apply scalafix rules (including OrganizeImports)
+sbt runLinter
+```
+
+```bash Assembly
+# Build the Layer 0 fat JAR
+sbt dagL0/assembly
+
+# Build the Layer 1 fat JAR
+sbt dagL1/assembly
+```
+
+</CodeGroup>
+
+| Command | Description |
+|---|---|
+| `sbt compile` | Compile all modules |
+| `sbt test` | Run the full test suite |
+| `sbt runLinter` | Auto-format with scalafmt + scalafix (OrganizeImports) |
+| `sbt dagL0/assembly` | Build the L0 fat JAR |
+| `sbt dagL1/assembly` | Build the L1 fat JAR |
+| `sbt "dagL0/test"` | Run tests for the `dagL0` module only |
+| `sbt "nodeShared/test"` | Run tests for the `nodeShared` module only |
+
+## just commands
+
+`just` commands orchestrate Docker-based environments and the full end-to-end test suite. Run `just` with no arguments (or `just --list`) to see all available recipes.
+
+<CodeGroup>
+
+```bash Test
+# Full test suite: compile, start Docker environment, run all e2e tests
+just test
+
+# Skip compilation and reuse existing JARs (faster iteration)
+just test --skip-assembly
+```
+
+```bash Environment
+# Start the test environment (without running tests)
+just up
+
+# Stop and clean up the test environment
+just down
+```
+
+```bash CI check
+# Lint + format check + tests — equivalent to the CI quality gate
+just check
+```
+
+</CodeGroup>
+
+| Command | Description |
+|---|---|
+| `just test` | Full test suite with Docker (compile + e2e tests) |
+| `just test --skip-assembly` | Reuse existing JARs, skip compilation |
+| `just up` | Start the test environment without running tests |
+| `just down` | Destroy the test environment |
+| `just check` | Lint + format check + tests (CI equivalent) |
+
+<Note>
+  `just test` starts 3 Global L0 nodes along with the full metagraph test stack. Use `--skip-assembly` during active development to avoid recompiling when the JAR has not changed.
+</Note>
+
+## Code style tools
+
+Code quality is enforced by two tools configured in the repository root.
+
+### scalafmt
+
+Configuration is in `.scalafmt.conf`. Key settings:
+
+```
+version=3.5.8
+runner.dialect = scala213
+
+preset = default
+align.preset = some
+maxColumn = 140
+indent.defnSite = 2
+indent.callSite = 2
+
+rewrite.rules = [
+  AvoidInfix
+  RedundantBraces
+  RedundantParens
+  AsciiSortImports
+  PreferCurlyFors
+]
+```
+
+### scalafix
+
+Configuration is in `.scalafix.conf`. Active rules:
+
+```
+rules = [
+    OrganizeImports,
+    NoSetSum,
+    NoSetMap,
+    NoMapConcat
+]
+```
+
+Imports are organized into groups: `javax?`, `cats`, `scala`, `io.constellationnetwork`, then everything else. Groups with 3 or more imports are coalesced into wildcard imports.
+
+### CI quality gate
+
+The `just check` command (and the `check-scala-code.yml` workflow) runs:
+
+```bash
+sbt --error 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test'
+```
+
+This checks scalafix rules, verifies scalafmt formatting, and runs all tests in a single SBT session.
+
+## CI pipeline
+
+The GitHub Actions CI pipeline has three stages:
+
+| Workflow | Description |
+|---|---|
+| `check-scala-code.yml` | Quality gate: lint, format check, and unit tests |
+| `e2e-functionality-tests.yml` | 8 parallel end-to-end test scenarios |
+| `release.yml` | Version tagging, JAR assembly, and SDK publication |

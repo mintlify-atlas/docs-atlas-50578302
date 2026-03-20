@@ -1,122 +1,118 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Tessellation",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#94cb04",
+    "light": "#545454",
+    "dark": "#94cb04"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "https://media.brand.dev/288cc7c4-5cef-4376-950b-bdf0083eedae.png",
+  "logo": {
+    "light": "https://media.brand.dev/288cc7c4-5cef-4376-950b-bdf0083eedae.png",
+    "dark": "https://media.brand.dev/288cc7c4-5cef-4376-950b-bdf0083eedae.png"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/Constellation-Labs/tessellation"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/Constellation-Labs/tessellation"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "architecture-overview"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/dag-consensus",
+              "concepts/snapshots",
+              "concepts/metagraphs",
+              "concepts/p2p-networking",
+              "concepts/cryptography"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Metagraph SDK",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "sdk/overview",
+              "sdk/getting-started",
+              "sdk/extension-points",
+              "sdk/data-applications",
+              "sdk/custom-rewards",
+              "sdk/custom-validators"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Node Operations",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "operations/running-a-node",
+              "operations/keytool",
+              "operations/wallet",
+              "operations/docker-deployment",
+              "operations/kubernetes-deployment",
+              "operations/monitoring"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "development/setup",
+              "development/build-commands",
+              "development/testing",
+              "development/contributing"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Global L0 Node",
             "pages": [
-              "api-reference/introduction"
+              "api/l0/cluster",
+              "api/l0/global-snapshots",
+              "api/l0/dag",
+              "api/l0/state-channels",
+              "api/l0/delegated-stakes",
+              "api/l0/node-collateral",
+              "api/l0/token-locks",
+              "api/l0/metrics"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "DAG L1 Node",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/l1/cluster",
+              "api/l1/transactions",
+              "api/l1/token-locks",
+              "api/l1/metrics"
+            ]
+          },
+          {
+            "group": "Currency Metagraph",
+            "pages": [
+              "api/currency-l0/overview",
+              "api/currency-l1/transactions"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

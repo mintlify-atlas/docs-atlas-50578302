@@ -1,0 +1,113 @@
+---
+title: "Development setup"
+description: "Set up your local environment to build and contribute to Tessellation, the Constellation Network Node Software."
+---
+
+## Prerequisites
+
+Before you begin, make sure you have the following installed:
+
+<CardGroup cols={3}>
+  <Card title="Java 21" icon="coffee">
+    Required and enforced at build time. Java 21 is needed for Kryo reflection used in binary serialization.
+  </Card>
+  <Card title="SBT" icon="cube">
+    Scala Build Tool — the primary build system for the project.
+  </Card>
+  <Card title="Docker" icon="docker">
+    Required for the Docker-based test environment (`just test`, `just up`).
+  </Card>
+</CardGroup>
+
+<Warning>
+  Java 21 is enforced at build time. Attempting to build with an older JDK version will result in a build failure.
+</Warning>
+
+## Clone and set up
+
+<Steps>
+  <Step title="Fork the repository">
+    Fork the repository on GitHub:
+
+    ```
+    https://github.com/Constellation-Labs/tessellation/fork
+    ```
+  </Step>
+
+  <Step title="Clone your fork and add upstream">
+    Clone your fork locally, then add the upstream remote so you can sync changes:
+
+    ```bash
+    git clone https://github.com/<your-github-account>/tessellation
+    cd tessellation
+    git remote add upstream https://github.com/Constellation-Labs/tessellation
+    ```
+  </Step>
+
+  <Step title="Verify Java 21">
+    Confirm you are running Java 21:
+
+    ```bash
+    java -version
+    ```
+
+    The output should report version 21. If not, install Java 21 and ensure it is on your `PATH`.
+  </Step>
+
+  <Step title="Verify SBT">
+    Confirm SBT is installed:
+
+    ```bash
+    sbt --version
+    ```
+  </Step>
+
+  <Step title="Compile the project">
+    Run a full compile to verify everything is wired up correctly:
+
+    ```bash
+    sbt compile
+    ```
+
+    A successful compile confirms that Java 21, SBT, and all dependencies are correctly configured.
+  </Step>
+</Steps>
+
+## JVM options
+
+The repository ships a `.jvmopts` file that SBT picks up automatically. It configures the JVM heap and compiler settings for the build:
+
+```
+-Dfile.encoding=UTF8
+-Xms1G
+-Xmx5G
+-XX:ReservedCodeCacheSize=500M
+-XX:+TieredCompilation
+-XX:+UseParallelGC
+```
+
+<Info>
+  These settings are applied automatically when you run `sbt`. You do not need to set them manually.
+</Info>
+
+## IDE setup
+
+The recommended IDE is **IntelliJ IDEA** with the Scala plugin.
+
+To enable automatic scalafmt formatting on save within IntelliJ, follow the [JetBrains scalafmt integration guide](https://www.jetbrains.com/help/idea/work-with-scala-formatter.html). This ensures your code is formatted consistently with the project's `.scalafmt.conf` settings before you commit.
+
+<Tip>
+  Even with IDE formatting enabled, run `sbt runLinter` before committing. The CI pipeline runs the linter as a quality gate and will fail if formatting or import ordering is incorrect.
+</Tip>
+
+## Nix flake (alternative)
+
+For contributors who use Nix, the repository provides both a `flake.nix` and a `shell.nix` that set up the full development environment declaratively, including the correct Java version and tooling.
+
+```bash
+# With Nix flakes enabled
+nix develop
+
+# Or with the legacy shell.nix
+nix-shell
+```

@@ -1,0 +1,187 @@
+---
+title: "Global Snapshots"
+description: "Query global incremental snapshots produced by the Global L0 consensus layer."
+---
+
+Global snapshots are the canonical state checkpoints of the Constellation Network. Each snapshot is an incremental record produced by Global L0 consensus, containing DAG blocks, metagraph state channel snapshots, reward transactions, and epoch progress.
+
+<Note>
+  All endpoints return the following response headers:
+  - **X-Id** — The node's public key identifier
+  - **X-Session-Token** — The current cluster session token
+  - **Request-Signature** — Cryptographic signature of the response for verification
+</Note>
+
+<Info>
+  Snapshot endpoints support two response formats via the `Accept` header:
+  - `application/json` — JSON-encoded snapshot (default)
+  - `application/octet-stream` — Binary-encoded snapshot (Kryo serialized)
+</Info>
+
+---
+
+## GET /global-snapshots/latest/ordinal
+
+Returns the ordinal number of the most recently produced global snapshot. Use this for lightweight polling to detect new snapshots without fetching full snapshot data.
+
+```bash
+curl https://<node-host>:9000/global-snapshots/latest/ordinal
+```
+
+**Response `200 OK`**
+
+<ResponseField name="value" type="integer">
+  The ordinal number of the latest global snapshot (non-negative integer)
+</ResponseField>
+
+**Response `404 Not Found`**
+
+No snapshot ordinal is available yet.
+
+**Response `503 Service Unavailable`**
+
+Node is not in `Ready` state yet.
+
+**Example response:**
+
+```json
+{
+  "value": 1483920
+}
+```
+
+---
+
+## GET /global-snapshots/latest
+
+Returns the full latest global snapshot, signed by the facilitator nodes. The response contains all blocks, state channel snapshots, rewards, and epoch data included in the snapshot.
+
+```bash
+curl https://<node-host>:9000/global-snapshots/latest
+```
+
+**Response `200 OK`**
+
+Returns a `SignedGlobalIncrementalSnapshot` object.
+
+<ResponseField name="value" type="object">
+  The snapshot data
+  <Expandable title="GlobalIncrementalSnapshot">
+    <ResponseField name="ordinal" type="integer">
+      Snapshot ordinal number
+    </ResponseField>
+    <ResponseField name="height" type="integer">
+      Snapshot height
+    </ResponseField>
+    <ResponseField name="subHeight" type="integer">
+      Snapshot sub-height within the same height
+    </ResponseField>
+    <ResponseField name="lastSnapshotHash" type="string">
+      SHA-256 hash of the previous snapshot
+    </ResponseField>
+    <ResponseField name="blocks" type="array">
+      DAG blocks included in this snapshot as active tips
+    </ResponseField>
+    <ResponseField name="stateChannelSnapshots" type="object">
+      Map of metagraph address to array of binary state channel snapshots
+    </ResponseField>
+    <ResponseField name="rewards" type="array">
+      Reward transactions distributed in this snapshot
+    </ResponseField>
+    <ResponseField name="epochProgress" type="integer">
+      Current epoch progress value
+    </ResponseField>
+    <ResponseField name="nextFacilitators" type="array">
+      Peer IDs of the next consensus facilitators
+    </ResponseField>
+    <ResponseField name="tips" type="object">
+      Active and deprecated tip references
+    </ResponseField>
+    <ResponseField name="stateProof" type="object">
+      Merkle proof of the global snapshot state
+    </ResponseField>
+    <ResponseField name="allowSpendBlocks" type="array">
+      Allow-spend blocks included in this snapshot (nullable)
+    </ResponseField>
+    <ResponseField name="spendActions" type="object">
+      Map of spend actions by address (nullable)
+    </ResponseField>
+    <ResponseField name="version" type="string">
+      Snapshot format version
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+<ResponseField name="proofs" type="array">
+  Cryptographic proofs from facilitator nodes
+  <Expandable title="SignatureProof">
+    <ResponseField name="id" type="string">
+      Public key ID of the signing node
+    </ResponseField>
+    <ResponseField name="signature" type="string">
+      ECDSA signature (hex-encoded DER)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+**Response `404 Not Found`**
+
+No snapshot is available yet.
+
+**Response `503 Service Unavailable`**
+
+Node is not in `Ready` state.
+
+---
+
+## GET /global-snapshots/latest/combined
+
+Returns the latest global snapshot together with the full computed state (balances, metagraph state, etc.). Use this when you need both the snapshot and its resulting state in a single request.
+
+```bash
+curl https://<node-host>:9000/global-snapshots/latest/combined
+```
+
+**Response `200 OK`**
+
+Returns a `SignedGlobalIncrementalSnapshotCombined` — a tuple of `[SignedGlobalIncrementalSnapshot, GlobalSnapshotInfo]`.
+
+<ResponseField name="[0]" type="object">
+  The signed global incremental snapshot (see `/global-snapshots/latest` for schema)
+</ResponseField>
+<ResponseField name="[1]" type="object">
+  The computed snapshot state (balances, last references, active tips)
+</ResponseField>
+
+**Response `404 Not Found`**
+
+Snapshot with state not available.
+
+**Response `503 Service Unavailable`**
+
+Node is not in `Ready` state.
+
+---
+
+## GET /global-snapshots/{ordinal}
+
+Returns a specific global snapshot by its ordinal number. Useful for historical lookups.
+
+```bash
+curl https://<node-host>:9000/global-snapshots/1483920
+```
+
+<ParamField path="ordinal" type="integer" required>
+  The snapshot ordinal number to retrieve (non-negative integer)
+</ParamField>
+
+**Response `200 OK`**
+
+Returns a `SignedGlobalIncrementalSnapshot` for the given ordinal (same schema as `/global-snapshots/latest`).
+
+**Response `404 Not Found`**
+
+No snapshot found for the given ordinal.
+
+**Response `503 Service Unavailable`**
+
+Node is not in `Ready` state.

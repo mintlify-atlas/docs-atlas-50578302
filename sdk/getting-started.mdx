@@ -1,0 +1,198 @@
+---
+title: "Getting started with the SDK"
+description: "Create a currency metagraph project from scratch using the Tessellation SDK."
+---
+
+This guide walks you through creating a minimal currency metagraph that extends `CurrencyL0App` and `CurrencyL1App`.
+
+## Prerequisites
+
+- Java 21 (enforced at build time — the SDK build will fail on any other version)
+- SBT 1.x
+- A Constellation Network node to connect to
+
+<Steps>
+
+<Step title="Add the SDK dependency">
+
+In your metagraph project's `build.sbt`, declare the SDK with `Provided` scope:
+
+```sbt
+val tessellationVersion = "2.x.x" // match your target node version
+
+libraryDependencies ++= Seq(
+  "io.constellationnetwork" %% "tessellation-sdk" % tessellationVersion % Provided
+)
+```
+
+The `Provided` scope makes all Tessellation types available at compile time without bundling them into your output JAR. The node runtime supplies the implementation.
+
+<Note>
+Always match the SDK version to the version of Tessellation running on the nodes that will host your metagraph. A mismatch causes class-loading errors at startup.
+</Note>
+
+You will also want to configure your build to produce a fat JAR that excludes the SDK classes:
+
+```sbt
+assemblyExcludedJars in assembly := {
+  val cp = (fullClasspath in assembly).value
+  cp.filter(_.data.getName.startsWith("tessellation"))
+}
+```
+
+</Step>
+
+<Step title="Implement CurrencyL0App">
+
+`CurrencyL0App` is the entry point for your metagraph's Layer 0 logic. Extend it and provide a `ClusterId`, `TessellationVersion`, and `MetagraphVersion`.
+
+```scala
+import cats.effect.{IO, Resource}
+
+import io.constellationnetwork.currency.l0.CurrencyL0App
+import io.constellationnetwork.schema.cluster.ClusterId
+import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
+
+import eu.timepit.refined.auto._
+
+object Main extends CurrencyL0App(
+  name             = "my-metagraph-l0",
+  header           = "My Metagraph L0",
+  clusterId        = ClusterId(java.util.UUID.fromString("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")),
+  tessellationVersion = TessellationVersion.unsafeFrom("2.x.x"),
+  metagraphVersion    = MetagraphVersion.unsafeFrom("0.1.0")
+)
+```
+
+The `OverridableL0` trait (mixed in by `CurrencyL0App`) provides default no-op implementations for all extension points:
+
+```scala
+// From CurrencyL0App.scala
+trait OverridableL0 extends TessellationIOApp[Run] {
+  def dataApplication: Option[Resource[IO, BaseDataApplicationL0Service[IO]]] = None
+
+  def rewards(
+    implicit sp: SecurityProvider[IO]
+  ): Option[Rewards[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]] = None
+
+  def customArtifacts(
+    lastCurrencySnapshot: Signed[CurrencyIncrementalSnapshot]
+  ): Option[SortedSet[SharedArtifact]] = None
+}
+```
+
+Override whichever extension points your metagraph needs.
+
+</Step>
+
+<Step title="Implement CurrencyL1App">
+
+`CurrencyL1App` is the entry point for your metagraph's Layer 1 logic. It handles transaction consensus and optionally data application consensus.
+
+```scala
+import cats.effect.{IO, Resource}
+
+import io.constellationnetwork.currency.l1.CurrencyL1App
+import io.constellationnetwork.schema.cluster.ClusterId
+import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
+
+import eu.timepit.refined.auto._
+
+object MainL1 extends CurrencyL1App(
+  name             = "my-metagraph-l1",
+  header           = "My Metagraph L1",
+  clusterId        = ClusterId(java.util.UUID.fromString("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")),
+  tessellationVersion = TessellationVersion.unsafeFrom("2.x.x"),
+  metagraphVersion    = MetagraphVersion.unsafeFrom("0.1.0")
+)
+```
+
+The `OverridableL1` trait provides defaults:
+
+```scala
+// From CurrencyL1App.scala
+trait OverridableL1 extends TessellationIOApp[Run] {
+  def dataApplication: Option[Resource[IO, BaseDataApplicationL1Service[IO]]] = None
+  def transactionValidator: Option[CustomContextualTransactionValidator] = None
+  def transactionFeeEstimator: Option[TransactionFeeEstimator[IO]] = None
+  def setTokenLockLimits: Option[TokenLockLimitsConfig] = None
+}
+```
+
+</Step>
+
+<Step title="Override extension points">
+
+Override the extension points you need directly in your `object`:
+
+```scala
+import cats.effect.{IO, Resource}
+
+import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
+import io.constellationnetwork.currency.l0.CurrencyL0App
+import io.constellationnetwork.node.shared.domain.rewards.Rewards
+import io.constellationnetwork.schema.cluster.ClusterId
+import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
+import io.constellationnetwork.security.SecurityProvider
+
+object Main extends CurrencyL0App(
+  name             = "my-metagraph-l0",
+  header           = "My Metagraph L0",
+  clusterId        = ClusterId(java.util.UUID.fromString("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")),
+  tessellationVersion = TessellationVersion.unsafeFrom("2.x.x"),
+  metagraphVersion    = MetagraphVersion.unsafeFrom("0.1.0")
+) {
+
+  // Custom data application (optional)
+  override def dataApplication: Option[Resource[IO, BaseDataApplicationL0Service[IO]]] =
+    Some(MyDataApplicationL0Service.make[IO])
+
+  // Custom reward distribution (optional)
+  override def rewards(
+    implicit sp: SecurityProvider[IO]
+  ): Option[Rewards[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]] =
+    Some(MyRewards.make[IO])
+}
+```
+
+See [Extension points](/sdk/extension-points) for the full list of overridable methods.
+
+</Step>
+
+<Step title="Build and package">
+
+Assemble a fat JAR that includes your code and all non-SDK dependencies:
+
+```bash
+sbt assembly
+```
+
+The resulting JAR is placed in `target/scala-2.13/`. Deploy it alongside your node configuration as described in the Tessellation deployment guides.
+
+<Tip>
+Set `assemblyJarName in assembly := "my-metagraph-l0.jar"` in `build.sbt` for predictable output file names.
+</Tip>
+
+</Step>
+
+</Steps>
+
+## Project layout
+
+A typical metagraph project has two SBT sub-projects:
+
+```
+my-metagraph/
+├── build.sbt
+├── modules/
+│   ├── l0/
+│   │   └── src/main/scala/
+│   │       └── Main.scala          # extends CurrencyL0App
+│   └── l1/
+│       └── src/main/scala/
+│           └── MainL1.scala        # extends CurrencyL1App
+└── project/
+    └── plugins.sbt
+```
+
+Both sub-projects share the same Tessellation SDK version and `ClusterId`.

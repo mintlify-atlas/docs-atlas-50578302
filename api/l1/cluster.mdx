@@ -1,0 +1,66 @@
+---
+title: "Cluster"
+description: "Retrieve peer information for the DAG L1 cluster."
+---
+
+The DAG L1 cluster endpoint provides information about all peers known to this node in the DAG Layer 1 cluster. L1 nodes form the transaction validation and block production layer that feeds into Global L0 snapshots.
+
+<Note>
+  All endpoints return the following response headers:
+  - **X-Id** — The node's public key identifier
+  - **X-Session-Token** — The current cluster session token
+  - **Request-Signature** — Cryptographic signature of the response for verification
+</Note>
+
+---
+
+## GET /cluster/info
+
+Returns the list of all peers currently known to this DAG L1 node, along with their state and connection details.
+
+```bash
+curl https://<node-host>:9010/cluster/info
+```
+
+**Response `200 OK`**
+
+Returns an array of `Peer` objects.
+
+<ResponseField name="[]" type="array">
+  Array of peer objects
+  <Expandable title="Peer">
+    <ResponseField name="id" type="string">
+      The peer's public key identifier (hex-encoded)
+    </ResponseField>
+    <ResponseField name="ip" type="string">
+      The peer's IP address or hostname
+    </ResponseField>
+    <ResponseField name="publicPort" type="integer">
+      Public-facing HTTP port (default: 9010)
+    </ResponseField>
+    <ResponseField name="p2pPort" type="integer">
+      Peer-to-peer communication port (default: 9011)
+    </ResponseField>
+    <ResponseField name="session" type="string">
+      The peer's current session token
+    </ResponseField>
+    <ResponseField name="state" type="string">
+      Current node state. One of: `Ready`, `Initial`, `ReadyToJoin`, `LoadingGenesis`, `GenesisReady`, `StartingSession`, `SessionStarted`, `WaitingForDownload`, `DownloadInProgress`, `Leaving`, `Offline`
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+**Example response:**
+
+```json
+[
+  {
+    "id": "c7f9a08bdea7ff5f51c8af16e223a1d751bac9c541125d9aef5658e9b7597aee",
+    "ip": "13.56.42.10",
+    "publicPort": 9010,
+    "p2pPort": 9011,
+    "session": "20180203073000",
+    "state": "Ready"
+  }
+]
+```
