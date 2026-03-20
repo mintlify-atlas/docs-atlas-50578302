@@ -1,0 +1,114 @@
+---
+title: "Data application"
+description: "Submit and query custom data update objects on the Currency L1 data node."
+---
+
+When a metagraph implements a [data application](/sdk/data-applications), the Currency L1 node exposes additional HTTP endpoints for submitting and querying custom `DataUpdate` objects. These endpoints are only available on metagraphs that have the `dataApplication` extension point configured.
+
+<Note>
+  All endpoints return the following response headers:
+  - **X-Id** — The node's public key identifier
+  - **X-Session-Token** — The current cluster session token
+  - **Request-Signature** — Cryptographic signature of the response for verification
+</Note>
+
+<Info>
+  The data application routes are served on a separate **Data L1** node instance (distinct from the Currency L1 node). The default port for data application endpoints is typically `9400`.
+</Info>
+
+---
+
+## GET /data
+
+Returns the list of `DataUpdate` objects currently enqueued for processing in the next consensus round.
+
+```bash
+curl https://<metagraph-data-l1-host>:9400/data
+```
+
+**Response `200 OK`** — Array of signed data update objects awaiting inclusion
+
+<ResponseField name="[]" type="array">
+  Array of `SignedDataUpdate` objects
+  <Expandable title="SignedDataUpdate">
+    <ResponseField name="value" type="object">
+      The custom data update payload. Shape is defined by the metagraph's data application implementation.
+    </ResponseField>
+    <ResponseField name="proofs" type="array">
+      Cryptographic signature proofs from the submitter
+      <Expandable title="SignatureProof">
+        <ResponseField name="id" type="string">
+          Public key hex of the signing key
+        </ResponseField>
+        <ResponseField name="signature" type="string">
+          ECDSA signature in DER format (hex-encoded)
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## POST /data
+
+Submits a signed custom data update object for processing. The data update is validated by the metagraph's `validateUpdate` implementation and, if accepted, forwarded to the L0 for inclusion in the next currency snapshot.
+
+```bash
+curl -X POST https://<metagraph-data-l1-host>:9400/data \
+  -H "Content-Type: application/json" \
+  -d '{
+    "value": {
+      "customField": "customValue"
+    },
+    "proofs": [
+      { "id": "<public-key-hex>", "signature": "<ecdsa-der-hex>" }
+    ]
+  }'
+```
+
+<ParamField body="value" type="object" required>
+  The custom data update payload. The schema is defined by the metagraph's data application. Must be serializable as JSON and compatible with the metagraph's `DataUpdate` type.
+</ParamField>
+<ParamField body="proofs" type="array" required>
+  Array of cryptographic signature proofs
+  <Expandable title="SignatureProof">
+    <ParamField body="id" type="string" required>
+      Public key hex of the signing key
+    </ParamField>
+    <ParamField body="signature" type="string" required>
+      ECDSA signature in DER format (hex-encoded)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+**Response `200 OK`**
+
+<ResponseField name="hash" type="string">
+  Hash of the accepted data update object
+</ResponseField>
+
+**Response `400 Bad Request`** — Invalid data update or signature. The metagraph's `validateUpdate` rejected the submission.
+
+<ResponseField name="message" type="string">
+  Human-readable rejection reason from the metagraph's validator
+</ResponseField>
+
+**Response `503 Service Unavailable`** — Last global snapshot ordinal is not yet available. The node is still syncing.
+
+---
+
+## Data flow
+
+<Note>
+  Data updates submitted to `/data` follow this lifecycle:
+  1. L1 node calls `validateUpdate` — if rejected, returns `400`
+  2. Accepted updates are held in the mempool
+  3. During next consensus round, updates are batched into a `DataApplicationBlock`
+  4. Block is sent to the Currency L0 node
+  5. L0 calls `validateData` and `combine` — updates are merged into `DataState`
+  6. Final state is included in the `CurrencyIncrementalSnapshot`
+  7. `onSnapshotConsensusResult` is called after finalization
+</Note>
+
+See [Data applications](/sdk/data-applications) for guidance on implementing the `DataUpdate` schema and validation logic.

@@ -1,0 +1,166 @@
+---
+title: "Node parameters"
+description: "Set and query node parameters for delegated staking reward configuration on the Global L0 node."
+---
+
+Node parameters allow validators to publish on-chain configuration that affects how delegated staking rewards are distributed. Delegators can query node parameters to select nodes based on reward fraction and metadata.
+
+<Note>
+  All endpoints return the following response headers:
+  - **X-Id** — The node's public key identifier
+  - **X-Session-Token** — The current cluster session token
+  - **Request-Signature** — Cryptographic signature of the response for verification
+</Note>
+
+---
+
+## POST /node-params
+
+Submits a signed node parameters update request. The new parameters take effect in the next global snapshot.
+
+```bash
+curl -X POST https://<node-host>:9000/node-params \
+  -H "Content-Type: application/json" \
+  -d '{
+    "value": {
+      "nodeId": "<node-public-key-hex>",
+      "rewardFraction": 500,
+      "name": "My Validator Node",
+      "description": "High-availability validator"
+    },
+    "proofs": [
+      { "id": "<public-key-hex>", "signature": "<ecdsa-der-hex>" }
+    ]
+  }'
+```
+
+<ParamField body="value" type="object" required>
+  The node parameters payload
+  <Expandable title="UpdateNodeParameters">
+    <ParamField body="nodeId" type="string" required>
+      The node's public key identifier (hex)
+    </ParamField>
+    <ParamField body="rewardFraction" type="integer" required>
+      Fraction of delegated stake rewards kept by the node operator, expressed in basis points out of 10000 (e.g., `500` = 5%).
+    </ParamField>
+    <ParamField body="name" type="string">
+      Human-readable node name visible to delegators
+    </ParamField>
+    <ParamField body="description" type="string">
+      Node description visible to delegators
+    </ParamField>
+  </Expandable>
+</ParamField>
+<ParamField body="proofs" type="array" required>
+  Cryptographic signature proofs. Must be signed by the node's key.
+  <Expandable title="SignatureProof">
+    <ParamField body="id" type="string" required>
+      Public key hex of the signing key
+    </ParamField>
+    <ParamField body="signature" type="string" required>
+      ECDSA signature in DER format (hex-encoded)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+**Response `200 OK`**
+
+<ResponseField name="hash" type="string">
+  Hash of the accepted node parameters update request
+</ResponseField>
+
+**Response `400 Bad Request`** — Invalid request format or signature.
+
+**Response `503 Service Unavailable`** — Node not ready yet.
+
+<Tip>
+Use the wallet CLI `create-node-params` command to construct and sign the node parameters update:
+```bash
+java -jar wallet.jar --keystore ./key.p12 --alias alias --password pw \
+  create-node-params \
+  --reward-fraction 0.05 \
+  --name "My Node" \
+  --description "Main validator node"
+```
+</Tip>
+
+---
+
+## GET /node-params
+
+Returns a list of all node parameters registered on the network, with optional filtering and sorting.
+
+```bash
+curl "https://<node-host>:9000/node-params?sort=totalAmountDelegated&sortOrder=DESC"
+```
+
+<ParamField query="search" type="string">
+  Filter results by node name or peer ID (partial match)
+</ParamField>
+<ParamField query="sort" type="string">
+  Sort field. One of: `name`, `peerID`, `address`, `totalAddressesAssigned`, `totalAmountDelegated`
+</ParamField>
+<ParamField query="sortOrder" type="string">
+  Sort direction. One of: `ASC`, `DESC`
+</ParamField>
+
+**Response `200 OK`** — Array of `NodeParametersInfo` objects
+
+<ResponseField name="nodeId" type="string">
+  Node public key identifier (hex)
+</ResponseField>
+<ResponseField name="address" type="string">
+  DAG address of the node operator
+</ResponseField>
+<ResponseField name="rewardFraction" type="integer">
+  Reward fraction kept by operator in basis points (out of 10000)
+</ResponseField>
+<ResponseField name="name" type="string">
+  Node name
+</ResponseField>
+<ResponseField name="description" type="string">
+  Node description
+</ResponseField>
+<ResponseField name="totalAddressesAssigned" type="integer">
+  Number of delegator addresses currently delegating to this node
+</ResponseField>
+<ResponseField name="totalAmountDelegated" type="integer">
+  Total amount delegated to this node in datums
+</ResponseField>
+
+**Response `400 Bad Request`** — Invalid query parameters.
+
+**Response `503 Service Unavailable`** — Node not ready yet.
+
+---
+
+## GET /node-params/{nodeId}
+
+Returns node parameters for a specific node.
+
+```bash
+curl https://<node-host>:9000/node-params/<node-public-key-hex>
+```
+
+<ParamField path="nodeId" type="string" required>
+  The node's public key identifier (hex)
+</ParamField>
+
+**Response `200 OK`** — Returns the `UpdateNodeParameters` object for the node
+
+<ResponseField name="nodeId" type="string">
+  Node public key identifier
+</ResponseField>
+<ResponseField name="rewardFraction" type="integer">
+  Reward fraction kept by operator in basis points
+</ResponseField>
+<ResponseField name="name" type="string">
+  Node name
+</ResponseField>
+<ResponseField name="description" type="string">
+  Node description
+</ResponseField>
+
+**Response `404 Not Found`** — No node parameters found for this node ID.
+
+**Response `503 Service Unavailable`** — Node not ready yet.

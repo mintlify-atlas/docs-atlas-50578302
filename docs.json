@@ -91,6 +91,7 @@
               "api/l0/state-channels",
               "api/l0/delegated-stakes",
               "api/l0/node-collateral",
+              "api/l0/node-params",
               "api/l0/token-locks",
               "api/l0/metrics"
             ]
@@ -108,7 +109,8 @@
             "group": "Currency Metagraph",
             "pages": [
               "api/currency-l0/overview",
-              "api/currency-l1/transactions"
+              "api/currency-l1/transactions",
+              "api/currency-l1/data"
             ]
           }
         ]

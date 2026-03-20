@@ -173,6 +173,66 @@ java -jar wallet.jar --keystore ./key.p12 --alias alias --password pw \
 | `--description` | `node_description` | Node description |
 | `--parent` | `-p` | Parent reference file |
 
+## Metagraph ownership commands
+
+These commands are used during metagraph genesis to establish ownership and staking authorization.
+
+### `create-owner-signing-message`
+
+Creates a signed ownership message that authorizes a DAG address as the owner of a metagraph. Used during genesis to set the metagraph owner.
+
+```bash
+java -jar wallet.jar --keystore ./key.p12 --alias alias --password pw \
+  create-owner-signing-message \
+  --address DAG4yourAddress \
+  --metagraphId DAG4metagraphAddress \
+  --parentOrdinal 0 \
+  --output ./owner-message.json
+```
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--address` | `-a` | DAG address of the owner |
+| `--metagraphId` | `-m` | Metagraph identifier address |
+| `--parentOrdinal` | `-o` | Ordinal of the parent message |
+| `--output` | `-f` | Output file path for the signed message |
+
+### `create-staking-signing-message`
+
+Creates a signed staking message that authorizes a DAG address to participate in metagraph staking. Used during genesis to configure the staking address.
+
+```bash
+java -jar wallet.jar --keystore ./key.p12 --alias alias --password pw \
+  create-staking-signing-message \
+  --address DAG4yourAddress \
+  --metagraphId DAG4metagraphAddress \
+  --parentOrdinal 0 \
+  --output ./staking-message.json
+```
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--address` | `-a` | DAG address for staking |
+| `--metagraphId` | `-m` | Metagraph identifier address |
+| `--parentOrdinal` | `-o` | Ordinal of the parent message |
+| `--output` | `-f` | Output file path for the signed message |
+
+### `merge-messages`
+
+Merges multiple signing message files into a single output file. Useful when combining owner and staking messages for metagraph genesis.
+
+```bash
+java -jar wallet.jar --keystore ./key.p12 --alias alias --password pw \
+  merge-messages \
+  ./owner-message.json ./staking-message.json \
+  --output ./merged-messages.json
+```
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| (positional args) | — | One or more message files to merge |
+| `--output` | `-f` | Output file path (existing file is overwritten) |
+
 ## Transaction chain model
 
 Tessellation transactions use an ordinal chain model. Each transaction references the previous one, forming an append-only chain per sender address:
