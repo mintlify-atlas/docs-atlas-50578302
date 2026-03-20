@@ -1,0 +1,129 @@
+{
+  "projectType": "framework",
+  "projectName": "Tessellation",
+  "projectDescription": "Tessellation is the Constellation Network node software — a DAG-based distributed ledger framework providing Layer 0 global consensus and Layer 1 metagraph validators with an extensible SDK for building custom data applications.",
+  "theme": "aspen",
+  "primaryColor": "#94cb04",
+  "lightColor": "#545454",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "architecture-overview"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/dag-consensus",
+              "concepts/snapshots",
+              "concepts/metagraphs",
+              "concepts/p2p-networking",
+              "concepts/cryptography"
+            ]
+          },
+          {
+            "group": "Metagraph SDK",
+            "pages": [
+              "sdk/overview",
+              "sdk/getting-started",
+              "sdk/extension-points",
+              "sdk/data-applications",
+              "sdk/custom-rewards",
+              "sdk/custom-validators"
+            ]
+          },
+          {
+            "group": "Node Operations",
+            "pages": [
+              "operations/running-a-node",
+              "operations/keytool",
+              "operations/wallet",
+              "operations/docker-deployment",
+              "operations/kubernetes-deployment",
+              "operations/monitoring"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "development/setup",
+              "development/build-commands",
+              "development/testing",
+              "development/contributing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Global L0 Node",
+            "pages": [
+              "api/l0/cluster",
+              "api/l0/global-snapshots",
+              "api/l0/dag",
+              "api/l0/state-channels",
+              "api/l0/delegated-stakes",
+              "api/l0/node-collateral",
+              "api/l0/token-locks",
+              "api/l0/metrics"
+            ]
+          },
+          {
+            "group": "DAG L1 Node",
+            "pages": [
+              "api/l1/cluster",
+              "api/l1/transactions",
+              "api/l1/token-locks",
+              "api/l1/metrics"
+            ]
+          },
+          {
+            "group": "Currency Metagraph",
+            "pages": [
+              "api/currency-l0/overview",
+              "api/currency-l1/transactions"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Hierarchical DAG consensus with Layer 0 global state and Layer 1 metagraph validators",
+    "Extensible metagraph SDK for building custom data applications on the network",
+    "Anti-entropy gossip protocol for resilient peer-to-peer state synchronization",
+    "Multi-phase consensus engine with FSM-based round management and stall detection",
+    "Merkle Patricia Trie state proofs for verifiable snapshot integrity",
+    "Delegated staking and node collateral mechanisms for network security",
+    "Rosetta API compatibility for blockchain data standardization",
+    "Kubernetes-native deployment with Kustomize overlays and Skaffold support"
+  ],
+  "publicApiSurface": [
+    "GET /global-snapshots/latest — Get the latest global snapshot",
+    "GET /global-snapshots/{ordinal} — Get global snapshot by ordinal",
+    "POST /state-channels/{address}/snapshot — Submit metagraph snapshot to L0",
+    "POST /transactions — Submit DAG L1 transaction",
+    "GET /transactions/last-reference/{address} — Get last transaction reference for address",
+    "POST /delegated-stakes — Create or update delegated stake",
+    "PUT /delegated-stakes — Withdraw delegated stake",
+    "POST /node-collateral — Post node collateral",
+    "POST /token-locks — Create token lock",
+    "GET /dag/{address}/balance — Get DAG balance for address",
+    "GET /cluster/info — Get cluster peer information",
+    "GET /metrics — Micrometer Prometheus metrics",
+    "SecurityProvider[F] — SDK cryptographic operations",
+    "keypair.generate[F] — SDK key generation",
+    "CurrencyL0App — Extension point for metagraph L0 customization",
+    "CurrencyL1App — Extension point for metagraph L1 customization"
+  ]
+}
